@@ -26,7 +26,7 @@ async function runClaudeCLI(promptText) {
         // Run npx @anthropic-ai/claude-code
         // Using --yes to skip auth prompts, assuming ~/.claude.json is injected by Jenkins
         // The -p flag sets the prompt
-        const command = `npx --yes @anthropic-ai/claude-code -p "${promptText.replace(/"/g, '\\"')}" --no-interaction`;
+        const command = `npx --yes @anthropic-ai/claude-code -p "${promptText.replace(/"/g, '\\"')}" --dangerously-skip-permissions`;
         execSync(command, {
             stdio: 'inherit',
             env: { ...process.env, CI: "true" }
