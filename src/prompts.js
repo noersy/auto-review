@@ -4,8 +4,8 @@ const { CLAUDE_REVIEW_FILE } = config;
 export function buildReviewPrompt(prTitle, additions, deletions) {
     return `You are an expert Principal Software Engineer acting as a code reviewer.
 I have checked out a Pull Request branch titled "${prTitle}". The PR has +${additions} and -${deletions} lines.
-Please review the changes in this branch against the main branch (e.g., using \`git diff origin/main...\`).
-If needed, inspect the full files to understand the context.
+The repository is located at /repo. Please review the changes using \`git diff origin/main...\` inside /repo.
+If needed, inspect the full files in /repo to understand the context.
 
 Focus on:
 1. Finding actual bugs or logical errors.
@@ -24,7 +24,7 @@ A developer is asking you a question regarding a Pull Request review.
 Here is the conversation context:
 ${conversationText}
 
-Please use your tools to inspect the repository code if you need more context to answer the question.
+Please use your tools to inspect the repository code in /repo if you need more context to answer the question.
 Write your final response to the user in Markdown format. Save your final output strictly to a file named '${CLAUDE_REVIEW_FILE}' in the current directory.
 DO NOT use interactive tools to ask me for confirmation. Just write the answer file and finish.`;
 }

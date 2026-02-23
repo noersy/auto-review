@@ -22,6 +22,7 @@ const opts = program.opts();
 
 async function runClaudeCLI(promptText) {
     logger.info("Executing Claude Code CLI...");
+    logger.info(`HOME=${process.env.HOME}, claude.json exists=${fs.existsSync(`${process.env.HOME}/.claude.json`)}`);
 
     const result = spawnSync(
         'npx',
