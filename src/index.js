@@ -41,7 +41,7 @@ async function main() {
     const gh = new GitHubClient(process.env.GITHUB_TOKEN);
 
     try {
-        const isNewPR = ['opened', 'synchronize'].includes(opts.action);
+        const isNewPR = ['opened', 'synchronize', 'reopened'].includes(opts.action);
         const isReply = opts.action === 'created' && opts.commentBody?.includes(config.BOT_MENTION);
 
         // ===================================
