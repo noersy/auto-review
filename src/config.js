@@ -6,6 +6,6 @@ export default {
     CLAUDE_REVIEW_FILE: 'claude_review.md',
 
     // Bot Identity
-    BOT_USERNAME: 'review-bot',  // Set to the real github bot username
-    BOT_MENTION: '@review-bot'
+    BOT_USERNAME: 'fei-reviewer',  // Set to the real github bot username
+    BOT_MENTION: '@fei-reviewer'
 };
