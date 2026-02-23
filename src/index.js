@@ -1,4 +1,3 @@
-import fs from 'fs';
 import { spawn } from 'child_process';
 import { Command } from 'commander';
 import dotenv from 'dotenv';

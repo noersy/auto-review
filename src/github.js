@@ -11,7 +11,7 @@ async function withRetry(fn, label, retries = 3, delayMs = 2000) {
         } catch (err) {
             const status = err.status ?? err.response?.status;
             if (attempt < retries && RETRYABLE_STATUS.has(status)) {
-                logger.warn(`${label} failed with ${status} — retrying (${attempt}/${retries - 1})...`);
+                logger.warn(`${label} failed with ${status} — retrying (${attempt}/${retries})...`);
                 await new Promise(r => setTimeout(r, delayMs * attempt));
             } else {
                 throw err;
