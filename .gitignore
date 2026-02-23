@@ -1,3 +1,4 @@
 .credentials.json
 claude-cli-session.json
 node_modules/
+Jenkinsfile
