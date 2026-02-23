@@ -1,0 +1,21 @@
+{
+    "claudeAiOauth": {
+        "accessToken": "sk-ant-oat01-...",
+        "refreshToken": "sk-ant-ort01-...",
+        "expiresAt": 1771778941382,
+        "scopes": [
+            "user:inference",
+            "user:mcp_servers",
+            "user:profile",
+            "user:sessions:claude_code"
+        ],
+        "subscriptionType": "pro",
+        "rateLimitTier": "default_claude_ai"
+    },
+    "mcpOAuth": {}
+}
+// INSTRUCTIONS:
+// 1. Copy this file content from your local `C:\Users\<user>\AppData\Roaming\@anthropic-ai\claude-code\config.json` 
+//    or `~/.claude.json`.
+// 2. Put the actual content into Jenkins Credentials safely (as 'claude-cli-session-json').
+// 3. NEVER commit your actual session keys into Git!
