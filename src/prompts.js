@@ -1,7 +1,7 @@
-export function buildReviewPrompt(prTitle, additions, deletions) {
+export function buildReviewPrompt(prTitle, additions, deletions, targetBranch) {
     return `You are an expert Principal Software Engineer acting as a code reviewer.
 I have checked out a Pull Request branch titled "${prTitle}". The PR has +${additions} and -${deletions} lines.
-The repository is located at /repo. Please review the changes using \`git diff origin/main...\` inside /repo.
+The repository is located at /repo. Please review the changes using \`git diff origin/${targetBranch}...\` inside /repo.
 If needed, inspect the full files in /repo to understand the context.
 
 Focus on:

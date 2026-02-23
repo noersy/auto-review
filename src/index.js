@@ -29,9 +29,9 @@ async function runClaudeCLI(promptText) {
         const proc = spawn(
             'npx',
             ['--yes', '@anthropic-ai/claude-code', '-p', promptText,
-             '--dangerously-skip-permissions',
-             '--output-format', 'stream-json',
-             '--verbose'],
+                '--dangerously-skip-permissions',
+                '--output-format', 'stream-json',
+                '--verbose'],
             {
                 stdio: ['ignore', 'pipe', 'pipe'],
                 env: { ...process.env, CI: 'true' },
@@ -111,7 +111,8 @@ async function main() {
                 return;
             }
 
-            const prompt = buildReviewPrompt(prData.title, prData.additions, prData.deletions);
+            const targetBranch = prData.base.ref;
+            const prompt = buildReviewPrompt(prData.title, prData.additions, prData.deletions, targetBranch);
             const reviewText = await runClaudeCLI(prompt);
             await gh.postComment(opts.repo, opts.pr, `## 🤖 Claude Auto Review\n\n${reviewText}`);
             logger.info('Review posted successfully');
