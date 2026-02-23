@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import { Command } from 'commander';
 import dotenv from 'dotenv';
 import { GitHubClient } from './github.js';
@@ -20,25 +20,61 @@ program
 program.parse();
 const opts = program.opts();
 
+// Run Claude Code CLI and return the final result text.
+// stderr (Claude's thinking/tool-use progress) is streamed live to console.
+// stdout (JSONL events) is captured to extract the final result.
 async function runClaudeCLI(promptText) {
     logger.info("Executing Claude Code CLI...");
 
-    const result = spawnSync(
-        'npx',
-        ['--yes', '@anthropic-ai/claude-code', '-p', promptText, '--dangerously-skip-permissions', '--output-format', 'json'],
-        {
-            stdio: ['ignore', 'inherit', 'inherit'],
-            env: { ...process.env, CI: 'true' }
-        }
-    );
+    return new Promise((resolve, reject) => {
+        const proc = spawn(
+            'npx',
+            ['--yes', '@anthropic-ai/claude-code', '-p', promptText,
+             '--dangerously-skip-permissions',
+             '--output-format', 'stream-json',
+             '--verbose'],
+            {
+                stdio: ['ignore', 'pipe', 'inherit'],
+                env: { ...process.env, CI: 'true' }
+            }
+        );
 
-    if (result.error) {
-        logger.error("Failed to spawn Claude Code CLI: " + result.error.message);
-        throw result.error;
-    }
-    if (result.status !== 0) {
-        throw new Error(`Claude Code CLI exited with code ${result.status}`);
-    }
+        let stdoutBuf = '';
+        let finalResult = null;
+
+        proc.stdout.on('data', chunk => {
+            stdoutBuf += chunk.toString();
+            // Parse complete JSONL lines as they arrive
+            const lines = stdoutBuf.split('\n');
+            stdoutBuf = lines.pop(); // keep incomplete last line
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                try {
+                    const event = JSON.parse(line);
+                    // The final result event contains the full response text
+                    if (event.type === 'result') {
+                        finalResult = event.result;
+                    }
+                } catch (_) { /* ignore non-JSON lines */ }
+            }
+        });
+
+        proc.on('close', code => {
+            if (code !== 0) {
+                reject(new Error(`Claude Code CLI exited with code ${code}`));
+                return;
+            }
+            if (!finalResult) {
+                reject(new Error('Claude Code CLI exited successfully but no result was found in output.'));
+                return;
+            }
+            resolve(finalResult);
+        });
+
+        proc.on('error', err => {
+            reject(new Error('Failed to spawn Claude Code CLI: ' + err.message));
+        });
+    });
 }
 
 async function main() {
@@ -65,15 +101,9 @@ async function main() {
             }
 
             const prompt = buildReviewPrompt(prData.title, prData.additions, prData.deletions);
-            await runClaudeCLI(prompt);
-
-            if (fs.existsSync(config.CLAUDE_REVIEW_FILE)) {
-                const reviewText = fs.readFileSync(config.CLAUDE_REVIEW_FILE, 'utf-8');
-                await gh.postComment(opts.repo, opts.pr, `## 🤖 Claude Auto Review\n\n${reviewText}`);
-                logger.info('Review posted successfully');
-            } else {
-                throw new Error(`Expected output file '${config.CLAUDE_REVIEW_FILE}' not found! Claude might have failed silently.`);
-            }
+            const reviewText = await runClaudeCLI(prompt);
+            await gh.postComment(opts.repo, opts.pr, `## 🤖 Claude Auto Review\n\n${reviewText}`);
+            logger.info('Review posted successfully');
             return;
         }
 
@@ -90,16 +120,9 @@ async function main() {
 
             const thread = await gh.getCommentThread(opts.repo, opts.pr);
             const prompt = buildReplyPrompt(thread);
-
-            await runClaudeCLI(prompt);
-
-            if (fs.existsSync(config.CLAUDE_REVIEW_FILE)) {
-                const reviewText = fs.readFileSync(config.CLAUDE_REVIEW_FILE, 'utf-8');
-                await gh.postComment(opts.repo, opts.pr, reviewText);
-                logger.info('Reply posted successfully');
-            } else {
-                throw new Error(`Expected output file '${config.CLAUDE_REVIEW_FILE}' not found! Claude might have failed silently.`);
-            }
+            const replyText = await runClaudeCLI(prompt);
+            await gh.postComment(opts.repo, opts.pr, replyText);
+            logger.info('Reply posted successfully');
             return;
         }
 
@@ -107,14 +130,7 @@ async function main() {
 
     } catch (error) {
         logger.error(`Fatal orchestration error: ${error.stack || error.message}`);
-        // Optional: Only post error to GitHub if it crashed midway
-        // await gh.postComment(opts.repo, opts.pr, `❌ **Auto-Review Error**: Sedang terjadi kesalahan internal pada pipeline bot.\n\n\`\`\`\n${error.message}\n\`\`\``).catch(() => {});
         process.exit(1);
-    } finally {
-        // Cleanup generated file
-        if (fs.existsSync(config.CLAUDE_REVIEW_FILE)) {
-            fs.unlinkSync(config.CLAUDE_REVIEW_FILE);
-        }
     }
 }
 
