@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { Command } from 'commander';
 import dotenv from 'dotenv';
 import { GitHubClient } from './github.js';
@@ -22,18 +22,22 @@ const opts = program.opts();
 
 async function runClaudeCLI(promptText) {
     logger.info("Executing Claude Code CLI...");
-    try {
-        // Run npx @anthropic-ai/claude-code
-        // Using --yes to skip auth prompts, assuming ~/.claude.json is injected by Jenkins
-        // The -p flag sets the prompt
-        const command = `npx --yes @anthropic-ai/claude-code -p "${promptText.replace(/"/g, '\\"')}" --dangerously-skip-permissions`;
-        execSync(command, {
-            stdio: 'inherit',
-            env: { ...process.env, CI: "true" }
-        });
-    } catch (error) {
-        logger.error("Claude Code CLI failed: " + error.message);
-        throw error;
+
+    const result = spawnSync(
+        'npx',
+        ['--yes', '@anthropic-ai/claude-code', '-p', promptText, '--dangerously-skip-permissions'],
+        {
+            stdio: ['ignore', 'inherit', 'inherit'],
+            env: { ...process.env, CI: 'true' }
+        }
+    );
+
+    if (result.error) {
+        logger.error("Failed to spawn Claude Code CLI: " + result.error.message);
+        throw result.error;
+    }
+    if (result.status !== 0) {
+        throw new Error(`Claude Code CLI exited with code ${result.status}`);
     }
 }
 
