@@ -25,7 +25,7 @@ async function runClaudeCLI(promptText) {
 
     const result = spawnSync(
         'npx',
-        ['--yes', '@anthropic-ai/claude-code', '-p', promptText, '--dangerously-skip-permissions', '--output-format', 'stream-json'],
+        ['--yes', '@anthropic-ai/claude-code', '-p', promptText, '--dangerously-skip-permissions', '--output-format', 'json'],
         {
             stdio: ['ignore', 'inherit', 'inherit'],
             env: { ...process.env, CI: 'true' }
