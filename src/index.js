@@ -28,22 +28,16 @@ async function runClaudeCLI(promptText) {
     return new Promise((resolve, reject) => {
         const proc = spawn(
             'npx',
-            ['--yes', '@anthropic-ai/claude-code',
+            ['--yes', '@anthropic-ai/claude-code', '-p', promptText,
              '--dangerously-skip-permissions',
              '--output-format', 'stream-json',
-             '--input-format', 'stream-json',
              '--verbose'],
             {
-                stdio: ['pipe', 'pipe', 'inherit'],
+                stdio: ['ignore', 'pipe', 'inherit'],
                 env: { ...process.env, CI: 'true' },
-                shell: true
+                shell: false
             }
         );
-
-        // Send the prompt as a stream-json message then close stdin
-        const inputMsg = JSON.stringify({ type: 'user', message: { role: 'user', content: promptText } });
-        proc.stdin.write(inputMsg + '\n');
-        proc.stdin.end();
 
         let stdoutBuf = '';
         let finalResult = null;
