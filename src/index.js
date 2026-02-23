@@ -22,7 +22,6 @@ const opts = program.opts();
 
 async function runClaudeCLI(promptText) {
     logger.info("Executing Claude Code CLI...");
-    logger.info(`HOME=${process.env.HOME}, claude.json exists=${fs.existsSync(`${process.env.HOME}/.claude.json`)}`);
 
     const result = spawnSync(
         'npx',
@@ -47,7 +46,8 @@ async function main() {
 
     try {
         const isNewPR = ['opened', 'synchronize', 'reopened'].includes(opts.action);
-        const isReply = opts.action === 'created' && opts.commentBody?.includes(config.BOT_MENTION);
+        const commentBody = (opts.commentBody === 'null' || !opts.commentBody) ? '' : opts.commentBody;
+        const isReply = opts.action === 'created' && commentBody.includes(config.BOT_MENTION);
 
         // ===================================
         // FLOW A: New PR Review
