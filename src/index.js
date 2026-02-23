@@ -43,16 +43,22 @@ async function runClaudeCLI(promptText) {
 
         proc.stdout.on('data', chunk => {
             stdoutBuf += chunk.toString();
-            // Parse complete JSONL lines as they arrive
             const lines = stdoutBuf.split('\n');
             stdoutBuf = lines.pop(); // keep incomplete last line
             for (const line of lines) {
                 if (!line.trim()) continue;
                 try {
                     const event = JSON.parse(line);
-                    // The final result event contains the full response text
                     if (event.type === 'result') {
                         finalResult = event.result;
+                    } else if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+                        for (const block of event.message.content) {
+                            if (block.type === 'text' && block.text?.trim()) {
+                                logger.info(`[Claude] ${block.text.trim()}`);
+                            } else if (block.type === 'tool_use') {
+                                logger.info(`[Claude] tool: ${block.name}(${JSON.stringify(block.input).slice(0, 120)})`);
+                            }
+                        }
                     }
                 } catch (_) { /* ignore non-JSON lines */ }
             }
