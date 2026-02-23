@@ -33,11 +33,16 @@ async function runClaudeCLI(promptText) {
              '--output-format', 'stream-json',
              '--verbose'],
             {
-                stdio: ['ignore', 'pipe', 'inherit'],
+                stdio: ['ignore', 'pipe', 'pipe'],
                 env: { ...process.env, CI: 'true' },
                 shell: false
             }
         );
+
+        // Pipe stderr live so we can see what Claude CLI is doing
+        proc.stderr.on('data', chunk => {
+            process.stderr.write(chunk);
+        });
 
         let stdoutBuf = '';
         let finalResult = null;
