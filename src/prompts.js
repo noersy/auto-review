@@ -1,4 +1,5 @@
-import { CLAUDE_REVIEW_FILE } from './config.js';
+import config from './config.js';
+const { CLAUDE_REVIEW_FILE } = config;
 
 export function buildReviewPrompt(prTitle, additions, deletions) {
     return `You are an expert Principal Software Engineer acting as a code reviewer.
