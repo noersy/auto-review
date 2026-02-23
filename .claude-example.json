@@ -15,7 +15,7 @@
     "mcpOAuth": {}
 }
 // INSTRUCTIONS:
-// 1. Copy this file content from your local `C:\Users\<user>\AppData\Roaming\@anthropic-ai\claude-code\config.json` 
-//    or `~/.claude.json`.
+// 1. Copy this file content from `C:\Users\<user>\.claude\.credentials.json` (Windows)
+//    or `~/.claude/.credentials.json` (Linux/Mac).
 // 2. Put the actual content into Jenkins Credentials safely (as 'claude-cli-session-json').
 // 3. NEVER commit your actual session keys into Git!

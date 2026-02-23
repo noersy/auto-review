@@ -64,7 +64,7 @@ docker run --rm \
     -e GITHUB_TOKEN="$GITHUB_TOKEN" \
     -e CI=true \
     -v "${PR_CHECKOUT_PATH}:/repo:ro" \
-    -v "${SESSION_FILE}:/root/.claude.json:ro" \
+    -v "${SESSION_FILE}:/run/secrets/claude-credentials:ro" \
     --workdir /app \
     auto-review-bot:local \
     --action "$ACTION" \

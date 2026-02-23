@@ -6,6 +6,10 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# Create non-root user (required: claude-code --dangerously-skip-permissions
+# refuses to run as root)
+RUN useradd -m -s /bin/bash botuser
+
 # Set working directory for the bot
 WORKDIR /app
 
@@ -14,9 +18,18 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY src/ ./src/
+COPY docker-entrypoint.sh /docker-entrypoint.sh
 
-# Claude Code CLI auth — mounted at runtime via volume or env
-# (see docker-run-local.sh)
+# Give botuser ownership of /app and create writable .claude dir
+RUN chown -R botuser:botuser /app && \
+    mkdir -p /home/botuser/.claude && \
+    chown -R botuser:botuser /home/botuser/.claude && \
+    chmod +x /docker-entrypoint.sh
+
+USER botuser
+
+# Claude Code CLI auth — credentials.json mounted at /run/secrets/claude-credentials
+# and copied to writable ~/.claude/ by entrypoint
 ENV CI=true
 
-ENTRYPOINT ["node", "src/index.js"]
+ENTRYPOINT ["/docker-entrypoint.sh"]
