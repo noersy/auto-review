@@ -5,6 +5,7 @@ import { buildReviewPrompt, buildReplyPrompt, buildIssueFixPrompt, buildIssueVal
 import { logger } from './logger.js';
 import config from './config.js';
 import { runProviderCLI } from './provider.js';
+import dotenv from 'dotenv';
 
 dotenv.config();
 
