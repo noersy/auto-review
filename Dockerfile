@@ -1,9 +1,10 @@
 FROM node:22-slim
 
-# Install git and npx dependencies
+# Install necessary system dependencies (git, ca-certificates, and procps for pgrep)
 RUN apt-get update && apt-get install -y \
     git \
     ca-certificates \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user (required: claude-code --dangerously-skip-permissions
