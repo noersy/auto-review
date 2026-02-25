@@ -9,4 +9,8 @@ if [ -f /run/secrets/gemini-credentials ]; then
     cp /run/secrets/gemini-credentials /home/botuser/.gemini/oauth_creds.json
 fi
 
+if [ -f /run/secrets/gemini-settings ]; then
+    cp /run/secrets/gemini-settings /home/botuser/.gemini/settings.json
+fi
+
 exec node /app/src/index.js "$@"
