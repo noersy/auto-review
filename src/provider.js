@@ -15,7 +15,7 @@ export async function runProviderCLI(provider, promptText) {
         '--yes', '@google/gemini-cli', '-p', promptText,
         '-y',
         '-o', 'stream-json',
-        '--workspace', '/repo'
+        '--include-directories', '/repo'
     ];
 
     const providerArgs = provider === 'gemini' ? geminiArgs : claudeArgs;
@@ -55,7 +55,7 @@ export async function runProviderCLI(provider, promptText) {
                             // E.g. {"type": "assistant", "message": {"content": [{ "text": "...", "type": "text" }]}}
                             for (const block of event.message.content) {
                                 if (block.type === 'text' && block.text?.trim()) {
-                                    logger.info(`[Gemini] ${block.text.trim()}`);
+                                    logger.info(`[Gemini] ${block.text.trim()} `);
                                 }
                             }
                         } else if (event.text) {
@@ -69,9 +69,9 @@ export async function runProviderCLI(provider, promptText) {
                         } else if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
                             for (const block of event.message.content) {
                                 if (block.type === 'text' && block.text?.trim()) {
-                                    logger.info(`[Claude] ${block.text.trim()}`);
+                                    logger.info(`[Claude] ${block.text.trim()} `);
                                 } else if (block.type === 'tool_use') {
-                                    logger.info(`[Claude] tool: ${block.name}(${JSON.stringify(block.input).slice(0, 120)})`);
+                                    logger.info(`[Claude] tool: ${block.name} (${JSON.stringify(block.input).slice(0, 120)})`);
                                 }
                             }
                         }
@@ -82,7 +82,7 @@ export async function runProviderCLI(provider, promptText) {
 
         proc.on('close', code => {
             if (code !== 0) {
-                reject(new Error(`${provider.toUpperCase()} CLI exited with code ${code}`));
+                reject(new Error(`${provider.toUpperCase()} CLI exited with code ${code} `));
                 return;
             }
             if (!finalResult) {
