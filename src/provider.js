@@ -15,7 +15,8 @@ export async function runProviderCLI(provider, promptText) {
         '--yes', '@google/gemini-cli', '-p', promptText,
         '-y',
         '-o', 'stream-json',
-        '--include-directories', '/repo'
+        '--include-directories', '/repo',
+        '--model', 'gemini-2.5-flash'
     ];
 
     const providerArgs = provider === 'gemini' ? geminiArgs : claudeArgs;
