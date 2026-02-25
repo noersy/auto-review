@@ -1,8 +1,7 @@
 import { spawn, execSync } from 'child_process';
 import { Command } from 'commander';
-import dotenv from 'dotenv';
 import { GitHubClient } from './github.js';
-import { buildReviewPrompt, buildReplyPrompt, buildIssueFixPrompt } from './prompts.js';
+import { buildReviewPrompt, buildReplyPrompt, buildIssueFixPrompt, buildIssueValidationPrompt } from './prompts.js';
 import { logger } from './logger.js';
 import config from './config.js';
 import { runProviderCLI } from './provider.js';
@@ -80,6 +79,31 @@ async function main() {
             logger.info(`Triggered FLOW C: Auto Fix Issue for ${opts.repo}#${opts.pr}`);
 
             const issueData = await gh.getIssue(opts.repo, opts.pr);
+
+            // 1. Issue Validation Step
+            logger.info('Validating issue context...');
+            const validationPrompt = buildIssueValidationPrompt(issueData.title, issueData.body);
+            // Use runProviderCLI to get validation result
+            const validationResultRaw = await runProviderCLI(opts.provider, validationPrompt);
+
+            let validationResult = { isValid: true };
+            try {
+                // Find JSON block if LLM added markdown formatting
+                const jsonStrMatch = validationResultRaw.match(/\{[\s\S]*\}/);
+                const jsonStr = jsonStrMatch ? jsonStrMatch[0] : validationResultRaw;
+                validationResult = JSON.parse(jsonStr);
+            } catch (err) {
+                logger.warn('Failed to parse validation result. Assuming valid and proceeding. Raw output: ' + validationResultRaw);
+            }
+
+            if (validationResult.isValid === false) {
+                logger.info(`Issue #${opts.pr} validation failed: ${validationResult.reason}`);
+                const rejectionMsg = `⚠️ **Auto-Review Dibatalkan**\n\nIssue ini tidak memiliki konteks yang cukup untuk diperbaiki secara otomatis oleh bot.\n\n**Alasan:** ${validationResult.reason}\n\nSilakan lengkapi deskripsi issue (misalnya dengan menambahkan logs, pesan error, langkah reproduksi, atau letak file yang bermasalah) lalu tambahkan kembali label \`auto-fix\`.`;
+                await gh.postComment(opts.repo, opts.pr, rejectionMsg);
+                return;
+            }
+
+            // 2. Proceed with Auto Fix
             const prompt = buildIssueFixPrompt(issueData.title, issueData.body);
 
             // Setup Git context and branch
