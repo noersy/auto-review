@@ -47,21 +47,15 @@ export async function runProviderCLI(provider, promptText) {
 
                     if (provider === 'gemini') {
                         /* 
-                         * Gemini CLI might have different stream-json format. 
-                         * Adapting to potential structures to grab the final result.
+                         * Gemini stream-json format:
+                         * Text chunks come in as: {"type":"message","role":"assistant","content":"...","delta":true}
+                         * The "result" event only contains stats.
                          */
-                        if (event.type === 'result') {
-                            finalResult = event.result;
-                        } else if (event.message?.content) {
-                            // E.g. {"type": "assistant", "message": {"content": [{ "text": "...", "type": "text" }]}}
-                            for (const block of event.message.content) {
-                                if (block.type === 'text' && block.text?.trim()) {
-                                    logger.info(`[Gemini] ${block.text.trim()} `);
-                                }
+                        if (event.type === 'message' && event.role === 'assistant' && event.content) {
+                            finalResult = (finalResult || '') + event.content;
+                            if (event.content.trim()) {
+                                logger.info(`[Gemini] ${event.content.trim()} `);
                             }
-                        } else if (event.text) {
-                            // Fallback if just text chunks are produced
-                            finalResult = (finalResult || '') + event.text;
                         }
                     } else {
                         // Claude Original parsing
