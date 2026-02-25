@@ -20,10 +20,12 @@ RUN npm ci --omit=dev
 COPY src/ ./src/
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 
-# Give botuser ownership of /app and create writable .claude dir
+# Give botuser ownership of /app and create writable .claude and .gemini dirs
 RUN chown -R botuser:botuser /app && \
     mkdir -p /home/botuser/.claude && \
     chown -R botuser:botuser /home/botuser/.claude && \
+    mkdir -p /home/botuser/.gemini && \
+    chown -R botuser:botuser /home/botuser/.gemini && \
     chmod +x /docker-entrypoint.sh
 
 USER botuser

@@ -5,6 +5,7 @@ import { GitHubClient } from './github.js';
 import { buildReviewPrompt, buildReplyPrompt } from './prompts.js';
 import { logger } from './logger.js';
 import config from './config.js';
+import { runProviderCLI } from './provider.js';
 
 dotenv.config();
 
@@ -14,79 +15,13 @@ program
     .requiredOption('--repo <repo>')
     .requiredOption('--pr <number>')
     .option('--comment-body <body>', '')
-    .option('--sender <login>', '');
+    .option('--sender <login>', '')
+    .option('--provider <provider>', 'LLM CLI provider to use (claude/gemini)', 'claude');
 
 program.parse();
 const opts = program.opts();
 
-// Run Claude Code CLI and return the final result text.
-// stderr (Claude's thinking/tool-use progress) is streamed live to console.
-// stdout (JSONL events) is captured to extract the final result.
-async function runClaudeCLI(promptText) {
-    logger.info("Executing Claude Code CLI...");
-
-    return new Promise((resolve, reject) => {
-        const proc = spawn(
-            'npx',
-            ['--yes', '@anthropic-ai/claude-code', '-p', promptText,
-                '--dangerously-skip-permissions',
-                '--output-format', 'stream-json',
-                '--verbose'],
-            {
-                stdio: ['ignore', 'pipe', 'pipe'],
-                env: { ...process.env, CI: 'true' },
-                shell: false
-            }
-        );
-
-        // Pipe stderr live so we can see what Claude CLI is doing
-        proc.stderr.on('data', chunk => {
-            process.stderr.write(chunk);
-        });
-
-        let stdoutBuf = '';
-        let finalResult = null;
-
-        proc.stdout.on('data', chunk => {
-            stdoutBuf += chunk.toString();
-            const lines = stdoutBuf.split('\n');
-            stdoutBuf = lines.pop(); // keep incomplete last line
-            for (const line of lines) {
-                if (!line.trim()) continue;
-                try {
-                    const event = JSON.parse(line);
-                    if (event.type === 'result') {
-                        finalResult = event.result;
-                    } else if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
-                        for (const block of event.message.content) {
-                            if (block.type === 'text' && block.text?.trim()) {
-                                logger.info(`[Claude] ${block.text.trim()}`);
-                            } else if (block.type === 'tool_use') {
-                                logger.info(`[Claude] tool: ${block.name}(${JSON.stringify(block.input).slice(0, 120)})`);
-                            }
-                        }
-                    }
-                } catch (_) { /* ignore non-JSON lines */ }
-            }
-        });
-
-        proc.on('close', code => {
-            if (code !== 0) {
-                reject(new Error(`Claude Code CLI exited with code ${code}`));
-                return;
-            }
-            if (!finalResult) {
-                reject(new Error('Claude Code CLI exited successfully but no result was found in output.'));
-                return;
-            }
-            resolve(finalResult);
-        });
-
-        proc.on('error', err => {
-            reject(new Error('Failed to spawn Claude Code CLI: ' + err.message));
-        });
-    });
-}
+// CLI Runner logic moved to src/provider.js
 
 async function main() {
     const gh = new GitHubClient(process.env.GITHUB_TOKEN);
@@ -113,8 +48,8 @@ async function main() {
 
             const targetBranch = prData.base.ref;
             const prompt = buildReviewPrompt(prData.title, prData.additions, prData.deletions, targetBranch);
-            const reviewText = await runClaudeCLI(prompt);
-            await gh.postComment(opts.repo, opts.pr, `## 🤖 Claude Auto Review\n\n${reviewText}`);
+            const reviewText = await runProviderCLI(opts.provider, prompt);
+            await gh.postComment(opts.repo, opts.pr, `## 🤖 ${opts.provider.toUpperCase()} Auto Review\n\n${reviewText}`);
             logger.info('Review posted successfully');
             return;
         }
@@ -132,7 +67,7 @@ async function main() {
 
             const thread = await gh.getCommentThread(opts.repo, opts.pr);
             const prompt = buildReplyPrompt(thread);
-            const replyText = await runClaudeCLI(prompt);
+            const replyText = await runProviderCLI(opts.provider, prompt);
             await gh.postComment(opts.repo, opts.pr, replyText);
             logger.info('Reply posted successfully');
             return;
