@@ -16,7 +16,7 @@ export async function runProviderCLI(provider, promptText) {
         '-y',
         '-o', 'stream-json',
         '--include-directories', '/repo',
-        '--model', 'gemini-2.5-flash'
+        // '--model', 'gemini-2.5-flash'
     ];
 
     const providerArgs = provider === 'gemini' ? geminiArgs : claudeArgs;
