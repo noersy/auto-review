@@ -1,8 +1,8 @@
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { Command } from 'commander';
 import dotenv from 'dotenv';
 import { GitHubClient } from './github.js';
-import { buildReviewPrompt, buildReplyPrompt } from './prompts.js';
+import { buildReviewPrompt, buildReplyPrompt, buildIssueFixPrompt } from './prompts.js';
 import { logger } from './logger.js';
 import config from './config.js';
 import { runProviderCLI } from './provider.js';
@@ -70,6 +70,63 @@ async function main() {
             const replyText = await runProviderCLI(opts.provider, prompt);
             await gh.postComment(opts.repo, opts.pr, replyText);
             logger.info('Reply posted successfully');
+            return;
+        }
+
+        // ===================================
+        // FLOW C: Auto Fix Issue by Label
+        // ===================================
+        if (opts.action === 'labeled') {
+            logger.info(`Triggered FLOW C: Auto Fix Issue for ${opts.repo}#${opts.pr}`);
+
+            const issueData = await gh.getIssue(opts.repo, opts.pr);
+            const prompt = buildIssueFixPrompt(issueData.title, issueData.body);
+
+            // Setup Git context and branch
+            const branchName = `auto-fix/issue-${opts.pr}`;
+            try {
+                process.chdir('/repo');
+                // Configure Git
+                execSync('git config --global user.email "bot@auto-reviewer.local"');
+                execSync('git config --global user.name "Auto Reviewer Bot"');
+
+                // Add safe directory and remote auth
+                execSync('git config --global --add safe.directory /repo');
+                execSync(`git remote set-url origin https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/${opts.repo}.git`);
+
+                execSync(`git checkout -b ${branchName}`);
+                logger.info(`Created and checked out branch: ${branchName}`);
+            } catch (err) {
+                logger.error(`Failed to setup git branch: ${err.message}`);
+                return;
+            }
+
+            // Let the LLM do the magic
+            await runProviderCLI(opts.provider, prompt);
+
+            // Check for changes and commit
+            try {
+                const diff = execSync('git status --porcelain').toString();
+                if (!diff.trim()) {
+                    await gh.postComment(opts.repo, opts.pr, '🤖 Maaf, saya tidak dapat menemukan solusi atau perubahan kode yang diperlukan untuk issue ini.');
+                    logger.info('No changes made by LLM.');
+                    return;
+                }
+
+                execSync('git add .');
+                execSync(`git commit -m "Fix: ${issueData.title} (Resolves #${opts.pr})"`);
+                execSync(`git push -u origin ${branchName}`);
+                logger.info('Changes committed and pushed to remote.');
+
+                // Create PR
+                const prBody = `Resolves #${opts.pr}\n\nDibuat secara otomatis oleh Auto-Reviewer Bot (${opts.provider}).`;
+                const prResponse = await gh.createPullRequest(opts.repo, `Fix: ${issueData.title}`, prBody, branchName);
+
+                await gh.postComment(opts.repo, opts.pr, `🤖 Saya telah mencoba memperbaiki issue ini. Silakan review Pull Request berikut: ${prResponse.html_url}`);
+                logger.info(`Pull request created successfully: ${prResponse.html_url}`);
+            } catch (err) {
+                logger.error(`Failed during commit/push/PR creation: ${err.message}`);
+            }
             return;
         }
 

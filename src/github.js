@@ -42,6 +42,17 @@ export class GitHubClient {
         return data;
     }
 
+    // Get Issue metadata (title, body)
+    async getIssue(repoFullName, issueNumber) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        logger.info(`Fetching Issue metadata for ${repoFullName}#${issueNumber}...`);
+        const { data } = await withRetry(
+            () => this.octokit.issues.get({ owner, repo, issue_number: issueNumber }),
+            `GET Issue #${issueNumber}`
+        );
+        return data;
+    }
+
     // Post a comment on a PR
     async postComment(repoFullName, issueNumber, body) {
         const { owner, repo } = this._parseRepo(repoFullName);
@@ -61,6 +72,17 @@ export class GitHubClient {
             `GET comments #${issueNumber}`
         );
         return data.map(c => `[${c.user.login}]: ${c.body}`).join('\n\n');
+    }
+
+    // Create a Pull Request
+    async createPullRequest(repoFullName, title, body, head, base = 'main') {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        logger.info(`Creating PR in ${repoFullName}: ${head} -> ${base}...`);
+        const { data } = await withRetry(
+            () => this.octokit.pulls.create({ owner, repo, title, body, head, base }),
+            `CREATE PR ${head} -> ${base}`
+        );
+        return data;
     }
 
     // Check if PR is "massive"

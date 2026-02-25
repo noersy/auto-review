@@ -25,3 +25,17 @@ Please use your tools to inspect the repository code in /repo if you need more c
 Write your final response to the user in Markdown format and return it as your final response.
 DO NOT ask for confirmation. Just answer directly.`;
 }
+
+export function buildIssueFixPrompt(issueTitle, issueBody) {
+    return `You are an expert Principal Software Engineer.
+An issue has been opened in the repository with the following details:
+
+TITLE: ${issueTitle}
+DESCRIPTION:
+${issueBody}
+
+Your task is to fix this issue directly in the codebase.
+The repository is located at /repo.
+Please analyze the issue, locate the files that need to be changed, and modify them to resolve the issue.
+DO NOT ask for confirmation. Just edit the files directly.`;
+}
