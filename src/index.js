@@ -106,6 +106,23 @@ async function main() {
             // 2. Proceed with Auto Fix
             const prompt = buildIssueFixPrompt(issueData.title, issueData.body);
 
+            // Resolve base branch early — sub-issue branches off parent fix branch
+            let baseBranch;
+            if (issueData.parent_issue_url) {
+                const parentNumber = issueData.parent_issue_url.split('/').pop();
+                const parentBranch = `auto-fix/issue-${parentNumber}`;
+                const parentExists = await gh.branchExists(opts.repo, parentBranch);
+                if (parentExists) {
+                    baseBranch = parentBranch;
+                    logger.info(`Sub-issue detected — branching from parent: ${baseBranch}`);
+                } else {
+                    baseBranch = await gh.getDefaultBranch(opts.repo);
+                    logger.warn(`Parent branch ${parentBranch} not found — falling back to ${baseBranch}`);
+                }
+            } else {
+                baseBranch = await gh.getDefaultBranch(opts.repo);
+            }
+
             // Setup Git context and branch
             const branchName = `auto-fix/issue-${opts.pr}`;
             try {
@@ -114,16 +131,11 @@ async function main() {
                 execSync('git config --global user.name "Auto Reviewer Bot"');
                 execSync('git config --global --add safe.directory /repo');
                 execSync(`git remote set-url origin https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/${opts.repo}.git`);
+                execSync('git fetch origin');
 
-                // If branch already exists locally or remotely, reset it to current HEAD
-                const localBranches = execSync('git branch').toString();
-                if (localBranches.includes(branchName)) {
-                    execSync(`git checkout ${branchName}`);
-                    execSync(`git reset --hard HEAD`);
-                } else {
-                    execSync(`git checkout -b ${branchName}`);
-                }
-                logger.info(`Checked out branch: ${branchName}`);
+                // Always create branch fresh from baseBranch
+                execSync(`git checkout -B ${branchName} origin/${baseBranch}`);
+                logger.info(`Checked out branch: ${branchName} (from ${baseBranch})`);
             } catch (err) {
                 logger.error(`Failed to setup git branch: ${err.message}`);
                 return;
@@ -145,26 +157,10 @@ async function main() {
                 execSync('git add .');
                 execSync('git reset HEAD .claude-credentials.json .gemini-credentials.json .gemini-settings.json 2>/dev/null || true', { shell: true });
                 execSync(`git commit -m "Fix: ${issueData.title} (Resolves #${opts.pr})"`);
-                execSync(`git push -u origin ${branchName} --force-with-lease`);
+                execSync(`git push -u origin ${branchName} --force`);
                 logger.info('Changes committed and pushed to remote.');
 
-                // Create PR — if this is a sub-issue, target the parent issue's fix branch
                 const prBody = `Resolves #${opts.pr}\n\nDibuat secara otomatis oleh Auto-Reviewer Bot (${opts.provider}).`;
-                let baseBranch;
-                if (issueData.parent_issue_url) {
-                    const parentNumber = issueData.parent_issue_url.split('/').pop();
-                    const parentBranch = `auto-fix/issue-${parentNumber}`;
-                    const parentExists = await gh.branchExists(opts.repo, parentBranch);
-                    if (parentExists) {
-                        baseBranch = parentBranch;
-                        logger.info(`Sub-issue detected — targeting parent branch: ${baseBranch}`);
-                    } else {
-                        baseBranch = await gh.getDefaultBranch(opts.repo);
-                        logger.warn(`Parent branch ${parentBranch} not found — falling back to ${baseBranch}`);
-                    }
-                } else {
-                    baseBranch = await gh.getDefaultBranch(opts.repo);
-                }
                 const prResponse = await gh.createPullRequest(opts.repo, `Fix: ${issueData.title}`, prBody, branchName, baseBranch);
 
                 await gh.postComment(opts.repo, opts.pr, `🤖 Saya telah mencoba memperbaiki issue ini. Silakan review Pull Request berikut: ${prResponse.html_url}`);
