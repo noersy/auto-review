@@ -1,6 +1,6 @@
 export default {
     // Thresholds
-    MASSIVE_PR_LINES: 1000,        // Max total lines before bailing out
+    MASSIVE_PR_LINES: 2600,        // Max total lines before bailing out
 
     // Claude Code parameters
     CLAUDE_REVIEW_FILE: 'claude_review.md',
