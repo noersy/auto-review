@@ -28,13 +28,16 @@ export async function runProviderCLI(provider, promptText) {
             shell: false
         });
 
-        // Pipe stderr live so we can see what the CLI is doing
+        // Pipe stderr live and also capture for diagnostics
+        let stderrBuf = '';
         proc.stderr.on('data', chunk => {
             process.stderr.write(chunk);
+            stderrBuf += chunk.toString();
         });
 
         let stdoutBuf = '';
         let finalResult = null;
+        let accumulatedText = '';  // Accumulate text from streaming chunks
 
         proc.stdout.on('data', chunk => {
             stdoutBuf += chunk.toString();
@@ -58,17 +61,24 @@ export async function runProviderCLI(provider, promptText) {
                             }
                         }
                     } else {
-                        // Claude Original parsing
-                        if (event.type === 'result') {
-                            finalResult = event.result;
-                        } else if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+                        /*
+                         * Claude stream-json format (--output-format stream-json --verbose):
+                         * - assistant: {"type":"assistant","message":{"content":[{"type":"text","text":"..."}|{"type":"tool_use","name":"..."}]}}
+                         * - result:    {"type":"result","subtype":"success","result":"..."}
+                         */
+                        if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
                             for (const block of event.message.content) {
-                                if (block.type === 'text' && block.text?.trim()) {
-                                    logger.info(`[Claude] ${block.text.trim()} `);
+                                if (block.type === 'text' && block.text) {
+                                    accumulatedText += block.text;
+                                    if (block.text.trim()) {
+                                        process.stderr.write(`[Claude] ${block.text}`);
+                                    }
                                 } else if (block.type === 'tool_use') {
                                     logger.info(`[Claude] tool: ${block.name} (${JSON.stringify(block.input).slice(0, 120)})`);
                                 }
                             }
+                        } else if (event.type === 'result') {
+                            finalResult = event.result || accumulatedText || null;
                         }
                     }
                 } catch (_) { /* ignore non-JSON lines */ }
@@ -80,8 +90,16 @@ export async function runProviderCLI(provider, promptText) {
                 reject(new Error(`${provider.toUpperCase()} CLI exited with code ${code} `));
                 return;
             }
+            // For Claude: fall back to accumulated stream text if no 'result' event was captured
+            if (!finalResult && accumulatedText) {
+                finalResult = accumulatedText;
+            }
             if (!finalResult) {
-                reject(new Error(`${provider.toUpperCase()} CLI exited successfully but no result was found in output.`));
+                const stderrTail = stderrBuf.split('\n').filter(l => l.trim()).slice(-20).join('\n');
+                reject(new Error(
+                    `${provider.toUpperCase()} CLI exited successfully but no result was found in output.\n` +
+                    `--- Last stderr (20 lines) ---\n${stderrTail || '(empty)'}`
+                ));
                 return;
             }
             resolve(finalResult);
