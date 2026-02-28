@@ -14,13 +14,9 @@ RUN useradd -m -s /bin/bash botuser
 # Set working directory for the bot
 WORKDIR /app
 
-# Copy bot source
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
-
-COPY src/ ./src/
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 
+# /app will be populated by git clone at runtime via Jenkinsfile
 # Give botuser ownership of /app and create writable .claude and .gemini dirs
 RUN chown -R botuser:botuser /app && \
     mkdir -p /home/botuser/.claude && \
