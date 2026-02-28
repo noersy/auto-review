@@ -74,6 +74,18 @@ export class GitHubClient {
         return data.map(c => `[${c.user.login}]: ${c.body}`).join('\n\n');
     }
 
+    // Get parent issue number if this is a sub-issue (returns null if not a sub-issue)
+    async getParentIssueNumber(repoFullName, issueNumber) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        const { data } = await withRetry(
+            () => this.octokit.issues.get({ owner, repo, issue_number: issueNumber }),
+            `GET Issue #${issueNumber}`
+        );
+        if (!data.parent_issue_url) return null;
+        const parts = data.parent_issue_url.split('/');
+        return parseInt(parts[parts.length - 1], 10);
+    }
+
     // Create a Pull Request
     async createPullRequest(repoFullName, title, body, head, base = 'main') {
         const { owner, repo } = this._parseRepo(repoFullName);
