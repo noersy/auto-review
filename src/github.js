@@ -84,16 +84,16 @@ export class GitHubClient {
         return data.default_branch;
     }
 
-    // Get parent issue number if this is a sub-issue (returns null if not a sub-issue)
-    async getParentIssueNumber(repoFullName, issueNumber) {
+    // Check if a branch exists on remote
+    async branchExists(repoFullName, branch) {
         const { owner, repo } = this._parseRepo(repoFullName);
-        const { data } = await withRetry(
-            () => this.octokit.issues.get({ owner, repo, issue_number: issueNumber }),
-            `GET Issue #${issueNumber}`
-        );
-        if (!data.parent_issue_url) return null;
-        const parts = data.parent_issue_url.split('/');
-        return parseInt(parts[parts.length - 1], 10);
+        try {
+            await this.octokit.repos.getBranch({ owner, repo, branch });
+            return true;
+        } catch (err) {
+            if (err.status === 404) return false;
+            throw err;
+        }
     }
 
     // Create a Pull Request

@@ -16,6 +16,7 @@ program
     .requiredOption('--pr <number>')
     .option('--comment-body <body>', '')
     .option('--sender <login>', '')
+    .option('--label-name <label>', '')
     .option('--provider <provider>', 'LLM CLI provider to use (claude/gemini)', 'claude');
 
 program.parse();
@@ -76,7 +77,7 @@ async function main() {
         // ===================================
         // FLOW C: Auto Fix Issue by Label
         // ===================================
-        if (opts.action === 'labeled') {
+        if (opts.action === 'labeled' && opts.labelName === config.AUTO_FIX_LABEL) {
             logger.info(`Triggered FLOW C: Auto Fix Issue for ${opts.repo}#${opts.pr}`);
 
             const issueData = await gh.getIssue(opts.repo, opts.pr);
@@ -84,12 +85,10 @@ async function main() {
             // 1. Issue Validation Step
             logger.info('Validating issue context...');
             const validationPrompt = buildIssueValidationPrompt(issueData.title, issueData.body);
-            // Use runProviderCLI to get validation result
             const validationResultRaw = await runProviderCLI(opts.provider, validationPrompt);
 
             let validationResult = { isValid: true };
             try {
-                // Find JSON block if LLM added markdown formatting
                 const jsonStrMatch = validationResultRaw.match(/\{[\s\S]*\}/);
                 const jsonStr = jsonStrMatch ? jsonStrMatch[0] : validationResultRaw;
                 validationResult = JSON.parse(jsonStr);
@@ -111,16 +110,20 @@ async function main() {
             const branchName = `auto-fix/issue-${opts.pr}`;
             try {
                 process.chdir('/repo');
-                // Configure Git
                 execSync('git config --global user.email "bot@auto-reviewer.local"');
                 execSync('git config --global user.name "Auto Reviewer Bot"');
-
-                // Add safe directory and remote auth
                 execSync('git config --global --add safe.directory /repo');
                 execSync(`git remote set-url origin https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/${opts.repo}.git`);
 
-                execSync(`git checkout -b ${branchName}`);
-                logger.info(`Created and checked out branch: ${branchName}`);
+                // If branch already exists locally or remotely, reset it to current HEAD
+                const localBranches = execSync('git branch').toString();
+                if (localBranches.includes(branchName)) {
+                    execSync(`git checkout ${branchName}`);
+                    execSync(`git reset --hard HEAD`);
+                } else {
+                    execSync(`git checkout -b ${branchName}`);
+                }
+                logger.info(`Checked out branch: ${branchName}`);
             } catch (err) {
                 logger.error(`Failed to setup git branch: ${err.message}`);
                 return;
@@ -138,18 +141,27 @@ async function main() {
                     return;
                 }
 
+                // Exclude credential files from commit
                 execSync('git add .');
+                execSync('git reset HEAD .claude-credentials.json .gemini-credentials.json .gemini-settings.json 2>/dev/null || true', { shell: true });
                 execSync(`git commit -m "Fix: ${issueData.title} (Resolves #${opts.pr})"`);
-                execSync(`git push -u origin ${branchName}`);
+                execSync(`git push -u origin ${branchName} --force-with-lease`);
                 logger.info('Changes committed and pushed to remote.');
 
                 // Create PR — if this is a sub-issue, target the parent issue's fix branch
                 const prBody = `Resolves #${opts.pr}\n\nDibuat secara otomatis oleh Auto-Reviewer Bot (${opts.provider}).`;
-                const parentIssueNumber = await gh.getParentIssueNumber(opts.repo, opts.pr);
                 let baseBranch;
-                if (parentIssueNumber) {
-                    baseBranch = `auto-fix/issue-${parentIssueNumber}`;
-                    logger.info(`Sub-issue detected — targeting parent branch: ${baseBranch}`);
+                if (issueData.parent_issue_url) {
+                    const parentNumber = issueData.parent_issue_url.split('/').pop();
+                    const parentBranch = `auto-fix/issue-${parentNumber}`;
+                    const parentExists = await gh.branchExists(opts.repo, parentBranch);
+                    if (parentExists) {
+                        baseBranch = parentBranch;
+                        logger.info(`Sub-issue detected — targeting parent branch: ${baseBranch}`);
+                    } else {
+                        baseBranch = await gh.getDefaultBranch(opts.repo);
+                        logger.warn(`Parent branch ${parentBranch} not found — falling back to ${baseBranch}`);
+                    }
                 } else {
                     baseBranch = await gh.getDefaultBranch(opts.repo);
                 }

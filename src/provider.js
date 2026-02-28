@@ -1,6 +1,8 @@
 import { spawn } from 'child_process';
 import { logger } from './logger.js';
 
+const CLI_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
 export async function runProviderCLI(provider, promptText) {
     logger.info(`Executing ${provider.toUpperCase()} CLI...`);
 
@@ -41,7 +43,6 @@ export async function runProviderCLI(provider, promptText) {
 
         proc.stdout.on('data', chunk => {
             const raw = chunk.toString();
-            process.stderr.write(`[${provider.toUpperCase()} stdout] ${raw}`);
             stdoutBuf += raw;
             const lines = stdoutBuf.split('\n');
             stdoutBuf = lines.pop(); // keep incomplete last line
@@ -87,7 +88,13 @@ export async function runProviderCLI(provider, promptText) {
             }
         });
 
+        const timeout = setTimeout(() => {
+            proc.kill('SIGTERM');
+            reject(new Error(`${provider.toUpperCase()} CLI timed out after ${CLI_TIMEOUT_MS / 60000} minutes`));
+        }, CLI_TIMEOUT_MS);
+
         proc.on('close', code => {
+            clearTimeout(timeout);
             if (code !== 0) {
                 reject(new Error(`${provider.toUpperCase()} CLI exited with code ${code} `));
                 return;
@@ -108,6 +115,7 @@ export async function runProviderCLI(provider, promptText) {
         });
 
         proc.on('error', err => {
+            clearTimeout(timeout);
             reject(new Error(`Failed to spawn ${provider.toUpperCase()} CLI: ` + err.message));
         });
     });
