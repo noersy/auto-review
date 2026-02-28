@@ -40,7 +40,9 @@ export async function runProviderCLI(provider, promptText) {
         let accumulatedText = '';  // Accumulate text from streaming chunks
 
         proc.stdout.on('data', chunk => {
-            stdoutBuf += chunk.toString();
+            const raw = chunk.toString();
+            process.stderr.write(`[${provider.toUpperCase()} stdout] ${raw}`);
+            stdoutBuf += raw;
             const lines = stdoutBuf.split('\n');
             stdoutBuf = lines.pop(); // keep incomplete last line
             for (const line of lines) {
