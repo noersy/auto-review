@@ -1,4 +1,4 @@
-import { spawn, execSync } from 'child_process';
+import { spawn, spawnSync, execSync } from 'child_process';
 import { Command } from 'commander';
 import { GitHubClient } from './github.js';
 import { buildReviewPrompt, buildReplyPrompt, buildIssueFixPrompt, buildIssueValidationPrompt } from './prompts.js';
@@ -156,7 +156,7 @@ async function main() {
                 // Exclude credential files from commit
                 execSync('git add .');
                 execSync('git reset HEAD .claude-credentials.json .gemini-credentials.json .gemini-settings.json 2>/dev/null || true', { shell: true });
-                execSync(`git commit -m "Fix: ${issueData.title} (Resolves #${opts.pr})"`);
+                spawnSync('git', ['commit', '-m', `Fix: ${issueData.title} (Resolves #${opts.pr})`], { stdio: 'inherit', shell: false });
                 execSync(`git push -u origin ${branchName} --force`);
                 logger.info('Changes committed and pushed to remote.');
 
