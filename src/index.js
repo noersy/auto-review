@@ -151,7 +151,7 @@ async function main() {
                     baseBranch = `auto-fix/issue-${parentIssueNumber}`;
                     logger.info(`Sub-issue detected — targeting parent branch: ${baseBranch}`);
                 } else {
-                    baseBranch = execSync('git symbolic-ref refs/remotes/origin/HEAD').toString().trim().replace('refs/remotes/origin/', '') || 'main';
+                    baseBranch = await gh.getDefaultBranch(opts.repo);
                 }
                 const prResponse = await gh.createPullRequest(opts.repo, `Fix: ${issueData.title}`, prBody, branchName, baseBranch);
 

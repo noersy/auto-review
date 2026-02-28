@@ -74,6 +74,16 @@ export class GitHubClient {
         return data.map(c => `[${c.user.login}]: ${c.body}`).join('\n\n');
     }
 
+    // Get default branch of a repo
+    async getDefaultBranch(repoFullName) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        const { data } = await withRetry(
+            () => this.octokit.repos.get({ owner, repo }),
+            `GET repo ${repoFullName}`
+        );
+        return data.default_branch;
+    }
+
     // Get parent issue number if this is a sub-issue (returns null if not a sub-issue)
     async getParentIssueNumber(repoFullName, issueNumber) {
         const { owner, repo } = this._parseRepo(repoFullName);
