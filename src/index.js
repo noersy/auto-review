@@ -145,7 +145,8 @@ async function main() {
 
                 // Create PR
                 const prBody = `Resolves #${opts.pr}\n\nDibuat secara otomatis oleh Auto-Reviewer Bot (${opts.provider}).`;
-                const prResponse = await gh.createPullRequest(opts.repo, `Fix: ${issueData.title}`, prBody, branchName);
+                const defaultBranch = execSync('git remote show origin | grep "HEAD branch" | awk \'{print $NF}\'').toString().trim() || 'main';
+                const prResponse = await gh.createPullRequest(opts.repo, `Fix: ${issueData.title}`, prBody, branchName, defaultBranch);
 
                 await gh.postComment(opts.repo, opts.pr, `🤖 Saya telah mencoba memperbaiki issue ini. Silakan review Pull Request berikut: ${prResponse.html_url}`);
                 logger.info(`Pull request created successfully: ${prResponse.html_url}`);
