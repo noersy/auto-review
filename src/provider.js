@@ -90,6 +90,8 @@ export async function runProviderCLI(provider, promptText) {
 
         const timeout = setTimeout(() => {
             proc.kill('SIGTERM');
+            // Force-kill after 5 s grace period if process ignores SIGTERM
+            setTimeout(() => { try { proc.kill('SIGKILL'); } catch (_) {} }, 5000);
             reject(new Error(`${provider.toUpperCase()} CLI timed out after ${CLI_TIMEOUT_MS / 60000} minutes`));
         }, CLI_TIMEOUT_MS);
 

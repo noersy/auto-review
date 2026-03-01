@@ -57,11 +57,22 @@ export function getChangedFiles() {
     if (result.error || result.status !== 0) return null;
     const output = result.stdout?.toString() ?? '';
     if (!output) return [];
-    // -z outputs NUL-delimited entries: "XY PATH\0" (no quoting of special chars)
-    return output.split('\0')
-        .filter(entry => entry.length > 3)
-        .map(entry => entry.slice(3))   // strip "XY " status prefix
-        .filter(f => !CREDENTIAL_FILES.includes(f));
+    // -z outputs NUL-delimited entries: "XY PATH\0"
+    // For renames/copies: "R  new\0old\0" — the second entry is the old path (no status prefix).
+    // We collect only the new paths and skip the old-path entries that follow R/C status codes.
+    const entries = output.split('\0');
+    const files = [];
+    let skipNext = false;
+    for (const entry of entries) {
+        if (skipNext) { skipNext = false; continue; }
+        if (entry.length <= 3) continue;
+        const xy = entry.slice(0, 2);
+        const file = entry.slice(3);
+        if (!CREDENTIAL_FILES.includes(file)) files.push(file);
+        // R (rename) and C (copy) are followed by the original path as a separate entry
+        if (xy[0] === 'R' || xy[0] === 'C' || xy[1] === 'R' || xy[1] === 'C') skipNext = true;
+    }
+    return files;
 }
 
 /**
