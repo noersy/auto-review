@@ -268,29 +268,29 @@ pipeline {
 
                 // Update only if content is non-empty
                 if (updatedClaude && updatedGemini) {
-                    dir('agent-credentials') {
-                        sh """
-                            git config user.email "jenkins@auto-review-bot"
-                            git config user.name "Jenkins Auto-Review Bot"
-                            git remote set-url origin "https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/agent-credentials.git"
-                            git fetch origin
-                            git checkout -B main origin/main
-                        """
-                        if (updatedClaude)   writeFile file: 'claude.json',          text: updatedClaude
-                        if (updatedGemini)   writeFile file: 'gemini-oauth.json',    text: updatedGemini
-                        if (updatedSettings) writeFile file: 'gemini-settings.json', text: updatedSettings
+                    def credDir = "${env.WORKSPACE}/agent-credentials"
+                    sh """
+                        git -C "${credDir}" config user.email "jenkins@auto-review-bot"
+                        git -C "${credDir}" config user.name "Jenkins Auto-Review Bot"
+                        git -C "${credDir}" remote set-url origin "https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/agent-credentials.git"
+                        git -C "${credDir}" fetch origin
+                        git -C "${credDir}" checkout -B main origin/main
+                    """
+                    // Write files using Groovy File API (supports absolute paths)
+                    new File("${credDir}/claude.json").text          = updatedClaude
+                    new File("${credDir}/gemini-oauth.json").text    = updatedGemini
+                    if (updatedSettings) new File("${credDir}/gemini-settings.json").text = updatedSettings
 
-                        sh """
-                            git add claude.json gemini-oauth.json gemini-settings.json
-                            if ! git diff --cached --quiet; then
-                                git commit -m "chore: refresh credentials after successful job build #${env.BUILD_NUMBER}"
-                                git push origin main
-                                echo "[CRED] Credentials updated in agent-credentials repo."
-                            else
-                                echo "[CRED] No credential changes detected, skipping push."
-                            fi
-                        """
-                    }
+                    sh """
+                        git -C "${credDir}" add claude.json gemini-oauth.json gemini-settings.json
+                        if ! git -C "${credDir}" diff --cached --quiet; then
+                            git -C "${credDir}" commit -m "chore: refresh credentials after successful job build #${env.BUILD_NUMBER}"
+                            git -C "${credDir}" push origin main
+                            echo "[CRED] Credentials updated in agent-credentials repo."
+                        else
+                            echo "[CRED] No credential changes detected, skipping push."
+                        fi
+                    """
                 }
             }
         }
