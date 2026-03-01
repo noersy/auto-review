@@ -1,4 +1,3 @@
-import { spawn } from 'child_process';
 import { Command } from 'commander';
 import { GitHubClient } from './github.js';
 import { buildReviewPrompt, buildReplyPrompt, buildIssueFixPrompt, buildIssueValidationPrompt } from './prompts.js';
@@ -161,6 +160,7 @@ async function main() {
 
             if (!commitAndPush(branchName, `Fix: ${issueData.title} (Resolves #${opts.pr})`, changedFiles)) {
                 logger.error('Failed to commit or push changes.');
+                await gh.postComment(opts.repo, opts.pr, '⚠️ **Auto-Fix Gagal**\n\nSaya berhasil membuat perubahan kode, namun gagal saat mencoba commit atau push ke repository. Silakan cek log Jenkins untuk detail.');
                 return;
             }
             logger.info('Changes committed and pushed to remote.');

@@ -13,8 +13,8 @@ const CREDENTIAL_FILES = [
  */
 function git(args, opts = {}) {
     const result = spawnSync('git', args, { cwd: REPO_DIR, stdio: 'inherit', shell: false, ...opts });
-    if (result.status !== 0) {
-        logger.error(`Failed to run: git ${args.join(' ')}`);
+    if (result.error || result.status !== 0) {
+        logger.error(`Failed to run: git ${args.join(' ')}${result.error ? ' — ' + result.error.message : ''}`);
         return false;
     }
     return true;
@@ -60,10 +60,9 @@ export function getChangedFiles() {
  * Returns true on success, false if any step fails.
  */
 export function commitAndPush(branchName, commitMessage, files) {
-    const gitOpts = { cwd: REPO_DIR, stdio: 'inherit', shell: false };
     return (
         git(['add', '--', ...files]) &&
-        git(['commit', '-m', commitMessage], gitOpts) &&
-        git(['push', '-u', 'origin', branchName, '--force-with-lease'], gitOpts)
+        git(['commit', '-m', commitMessage]) &&
+        git(['push', '-u', 'origin', branchName, '--force-with-lease'])
     );
 }
