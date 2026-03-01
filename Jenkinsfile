@@ -146,7 +146,7 @@ pipeline {
                     dir('auto-review-bot') {
                         checkout([
                             $class: 'GitSCM',
-                            branches: [[name: 'main']],
+                            branches: [[name: 'auto-fix-by-issue']],
                             userRemoteConfigs: [[
                                 url: "https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/auto-review.git"
                             ]],
@@ -266,9 +266,9 @@ pipeline {
                                     git config --global --add safe.directory /app
                                     if [ -d /app/.git ]; then
                                         git -C /app fetch origin
-                                        git -C /app checkout -B main origin/main
+                                        git -C /app checkout -B auto-fix-by-issue origin/auto-fix-by-issue
                                     else
-                                        git clone --branch main https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/auto-review.git /app
+                                        git clone --branch auto-fix-by-issue https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/auto-review.git /app
                                     fi
                                     cd /app
                                     LOCK_HASH=\$(sha256sum package-lock.json | cut -d" " -f1)
