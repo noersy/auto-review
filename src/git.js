@@ -1,7 +1,7 @@
 import { spawnSync } from 'child_process';
 import { logger } from './logger.js';
 
-const REPO_DIR = '/repo';
+const REPO_DIR = process.env.REPO_DIR ?? '/repo';
 const CREDENTIAL_FILES = [
     '.claude-credentials.json',
     '.gemini-credentials.json',

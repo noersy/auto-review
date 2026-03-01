@@ -77,7 +77,7 @@ async function runReview(gh, repo, prNumber, provider) {
         logger.info('PR description updated with auto-generated summary.');
     }
 
-    const reviewBody = `## 🤖 ${provider.toUpperCase()} Auto Review\n\n${reviewText}`;
+    const reviewBody = `<!-- auto-review-bot -->\n## 🤖 ${provider.toUpperCase()} Auto Review\n\n${reviewText}`;
     const existingReview = await gh.findBotReviewComment(repo, prNumber);
     if (existingReview) {
         await gh.updateComment(repo, existingReview.id, reviewBody);

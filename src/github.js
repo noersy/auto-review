@@ -62,7 +62,7 @@ export class GitHubClient {
             }),
             `LIST comments #${issueNumber}`
         );
-        return comments.find(c => c.user.login === config.BOT_USERNAME && c.body.startsWith('## 🤖')) ?? null;
+        return comments.find(c => c.user.login === config.BOT_USERNAME && c.body.includes('<!-- auto-review-bot -->')) ?? null;
     }
 
     // Update an existing comment by ID
