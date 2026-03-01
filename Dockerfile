@@ -32,3 +32,4 @@ USER botuser
 ENV CI=true
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["node", "/app/src/index.js", "--help"]
