@@ -30,10 +30,17 @@ export function setupBranch(branchName, baseBranch, repoFullName, token) {
         ['config', '--global', 'user.email', 'bot@auto-reviewer.local'],
         ['config', '--global', 'user.name', 'Auto Reviewer Bot'],
         ['config', '--global', '--add', 'safe.directory', REPO_DIR],
-        ['remote', 'set-url', 'origin', `https://x-access-token:${token}@github.com/${repoFullName}.git`],
         ['fetch', 'origin'],
         ['checkout', '-B', branchName, `origin/${baseBranch}`],
     ];
+
+    // Set remote URL separately so the token is never passed through git() logging
+    const remoteResult = spawnSync('git', ['remote', 'set-url', 'origin', `https://x-access-token:${token}@github.com/${repoFullName}.git`], { cwd: REPO_DIR, stdio: 'inherit', shell: false });
+    if (remoteResult.error || remoteResult.status !== 0) {
+        logger.error('Failed to run: git remote set-url origin <redacted>');
+        return false;
+    }
+
     for (const args of steps) {
         if (!git(args)) return false;
     }
@@ -46,12 +53,14 @@ export function setupBranch(branchName, baseBranch, repoFullName, token) {
  * excluding credential files. Returns null if the git command fails.
  */
 export function getChangedFiles() {
-    const result = spawnSync('git', ['status', '--porcelain'], { cwd: REPO_DIR, shell: false, stdio: 'pipe' });
-    if (result.status !== 0) return null;
+    const result = spawnSync('git', ['status', '-z'], { cwd: REPO_DIR, shell: false, stdio: 'pipe' });
+    if (result.error || result.status !== 0) return null;
     const output = result.stdout?.toString() ?? '';
-    if (!output.trim()) return [];
-    return output.trim().split('\n')
-        .map(line => line.slice(3))  // strip "XY " status prefix
+    if (!output) return [];
+    // -z outputs NUL-delimited entries: "XY PATH\0" (no quoting of special chars)
+    return output.split('\0')
+        .filter(entry => entry.length > 3)
+        .map(entry => entry.slice(3))   // strip "XY " status prefix
         .filter(f => !CREDENTIAL_FILES.includes(f));
 }
 

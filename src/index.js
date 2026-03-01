@@ -148,7 +148,13 @@ async function main() {
             if (!setupBranch(branchName, baseBranch, opts.repo, process.env.GITHUB_TOKEN)) return;
 
             // Let the LLM do the magic
-            await runProviderCLI(opts.provider, prompt);
+            try {
+                await runProviderCLI(opts.provider, prompt);
+            } catch (err) {
+                logger.error(`LLM CLI failed during auto-fix: ${err.message}`);
+                await gh.postComment(opts.repo, opts.pr, `⚠️ **Auto-Fix Gagal**\n\nTerjadi error saat menjalankan LLM: ${err.message}\n\nSilakan cek log Jenkins untuk detail.`);
+                return;
+            }
 
             // Check for changes and commit
             const changedFiles = getChangedFiles();
