@@ -162,14 +162,14 @@ pipeline {
                         writeFile file: "${env.WORKSPACE}/.gemini-settings.json",    text: env.GEMINI_SETTINGS_JSON
                     }
 
+                    sh "rm -rf '${env.WORKSPACE}/auto-review-bot'"
                     dir('auto-review-bot') {
                         checkout([
                             $class: 'GitSCM',
                             branches: [[name: 'auto-fix-by-issue']],
                             userRemoteConfigs: [[
                                 url: "https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/auto-review.git"
-                            ]],
-                            extensions: [[$class: 'CleanBeforeCheckout']]
+                            ]]
                         ])
                         sh "docker build -t auto-review-bot:ci ."
                     }
@@ -261,12 +261,19 @@ pipeline {
                         // - If /repo/.git exists: update in-place (already a valid clone)
                         // - Otherwise: clone into a temp dir then move contents into /repo
                         if (action == 'labeled' && env.GH_LABEL_NAME == 'auto-fix') {
+                            // /repo is bind-mounted from the Jenkins workspace; files may be owned
+                            // by the Jenkins process user, not botuser. Fix ownership so botuser
+                            // can write to .git/ and clone into /repo.
+                            sh "docker exec --user root ${containerName} chown -R botuser:botuser /repo"
+
                             sh """
                                 docker exec --user botuser ${containerName} bash -c '
                                     git config --global --add safe.directory /repo
                                     if [ -d /repo/.git ]; then
                                         git -C /repo remote set-url origin https://x-access-token:${env.GITHUB_TOKEN}@github.com/${env.GH_REPO}.git
                                         git -C /repo fetch origin
+                                        git -C /repo reset --hard HEAD
+                                        git -C /repo clean -fd
                                         git -C /repo remote set-head origin -a
                                         DEFAULT_BRANCH=\$(git -C /repo symbolic-ref refs/remotes/origin/HEAD | cut -d/ -f4)
                                         git -C /repo checkout -B \$DEFAULT_BRANCH origin/\$DEFAULT_BRANCH

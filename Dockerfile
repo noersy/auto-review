@@ -11,9 +11,9 @@ RUN apt-get update && apt-get install -y \
 # refuses to run as root)
 RUN useradd -m -s /bin/bash botuser
 
-# Create writable credential dirs for botuser
-RUN mkdir -p /home/botuser/.claude /home/botuser/.gemini && \
-    chown -R botuser:botuser /home/botuser/.claude /home/botuser/.gemini
+# Create writable dirs for botuser
+RUN mkdir -p /home/botuser/.claude /home/botuser/.gemini /app && \
+    chown -R botuser:botuser /home/botuser/.claude /home/botuser/.gemini /app
 
 # /app and /repo are populated at runtime via Jenkinsfile (git clone + docker cp)
 # No ENTRYPOINT or CMD — container is started with 'sleep infinity' and
