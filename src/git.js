@@ -34,8 +34,9 @@ export function setupBranch(branchName, baseBranch, repoFullName, token) {
         ['checkout', '-B', branchName, `origin/${baseBranch}`],
     ];
 
-    // Set remote URL separately so the token is never passed through git() logging
-    const remoteResult = spawnSync('git', ['remote', 'set-url', 'origin', `https://x-access-token:${token}@github.com/${repoFullName}.git`], { cwd: REPO_DIR, stdio: 'inherit', shell: false });
+    // Set remote URL separately so the token is never passed through git() logging.
+    // stdio: 'pipe' prevents the URL (which contains the token) from leaking into logs.
+    const remoteResult = spawnSync('git', ['remote', 'set-url', 'origin', `https://x-access-token:${token}@github.com/${repoFullName}.git`], { cwd: REPO_DIR, stdio: 'pipe', shell: false });
     if (remoteResult.error || remoteResult.status !== 0) {
         logger.error('Failed to run: git remote set-url origin <redacted>');
         return false;

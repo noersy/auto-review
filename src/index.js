@@ -48,7 +48,16 @@ if (!/^\d+$/.test(opts.pr)) {
     process.exit(1);
 }
 
+// Validate --action is a known value
+const KNOWN_ACTIONS = new Set(['opened', 'synchronize', 'reopened', 'created', 'labeled', 'closed']);
+if (!KNOWN_ACTIONS.has(opts.action)) {
+    console.error(`Invalid --action value: "${opts.action}". Expected one of: ${[...KNOWN_ACTIONS].join(', ')}.`);
+    process.exit(1);
+}
+
 // CLI Runner logic moved to src/provider.js
+
+const REPO_DIR = process.env.REPO_DIR ?? '/repo';
 
 async function runReview(gh, repo, prNumber, provider) {
     const { isMassive, prData } = await gh.checkMassivePR(repo, prNumber);
@@ -63,14 +72,16 @@ async function runReview(gh, repo, prNumber, provider) {
     const targetBranch = prData.base.ref;
     const isPRBodyEmpty = !prData.body || !prData.body.trim();
 
-    // Run review and (if PR has no description) summary generation in parallel
-    const tasks = [
-        runProviderCLI(provider, buildReviewPrompt(prData.title, prData.additions, prData.deletions, targetBranch)),
-        isPRBodyEmpty
-            ? runProviderCLI(provider, buildSummaryPrompt(prData.title, targetBranch))
-            : Promise.resolve(null),
-    ];
-    const [reviewText, summaryText] = await Promise.all(tasks);
+    // Fetch comments and run review (+ optional summary) in parallel
+    const [{ existingReview }, [reviewText, summaryText]] = await Promise.all([
+        gh.getCommentsContext(repo, prNumber),
+        Promise.all([
+            runProviderCLI(provider, buildReviewPrompt(prData.title, prData.additions, prData.deletions, targetBranch, REPO_DIR)),
+            isPRBodyEmpty
+                ? runProviderCLI(provider, buildSummaryPrompt(prData.title, targetBranch, REPO_DIR))
+                : Promise.resolve(null),
+        ]),
+    ]);
 
     if (summaryText) {
         await gh.updatePRDescription(repo, prNumber, summaryText);
@@ -78,7 +89,6 @@ async function runReview(gh, repo, prNumber, provider) {
     }
 
     const reviewBody = `<!-- auto-review-bot -->\n## 🤖 ${provider.toUpperCase()} Auto Review\n\n${reviewText}`;
-    const existingReview = await gh.findBotReviewComment(repo, prNumber);
     if (existingReview) {
         await gh.updateComment(repo, existingReview.id, reviewBody);
         logger.info('Existing review comment updated.');
@@ -89,6 +99,10 @@ async function runReview(gh, repo, prNumber, provider) {
 }
 
 async function main() {
+    if (!process.env.GITHUB_TOKEN) {
+        console.error('Missing required environment variable: GITHUB_TOKEN');
+        process.exit(1);
+    }
     const gh = new GitHubClient(process.env.GITHUB_TOKEN);
 
     try {
@@ -122,7 +136,7 @@ async function main() {
 
             logger.info(`Triggered FLOW B: Reply Comment for ${opts.repo}#${opts.pr}`);
 
-            const prompt = buildReplyPrompt(thread);
+            const prompt = buildReplyPrompt(thread, REPO_DIR);
             const replyText = await runProviderCLI(opts.provider, prompt);
             await gh.postComment(opts.repo, opts.pr, replyText);
             logger.info('Reply posted successfully');
@@ -168,7 +182,7 @@ async function main() {
             }
 
             // 3. Proceed with Auto Fix
-            const prompt = buildIssueFixPrompt(issueData.title, issueData.body ?? '');
+            const prompt = buildIssueFixPrompt(issueData.title, issueData.body ?? '', REPO_DIR);
 
             // Resolve base branch early — sub-issue branches off parent fix branch
             let baseBranch;

@@ -53,18 +53,6 @@ export class GitHubClient {
         return data;
     }
 
-    // Find the bot's existing review comment on a PR, returns comment data or null
-    async findBotReviewComment(repoFullName, issueNumber) {
-        const { owner, repo } = this._parseRepo(repoFullName);
-        const comments = await withRetry(
-            () => this.octokit.paginate(this.octokit.issues.listComments, {
-                owner, repo, issue_number: issueNumber, per_page: 100
-            }),
-            `LIST comments #${issueNumber}`
-        );
-        return comments.find(c => c.user.login === config.BOT_USERNAME && c.body.includes('<!-- auto-review-bot -->')) ?? null;
-    }
-
     // Update an existing comment by ID
     async updateComment(repoFullName, commentId, body) {
         const { owner, repo } = this._parseRepo(repoFullName);
@@ -85,9 +73,10 @@ export class GitHubClient {
         );
     }
 
-    // Fetch all comments once; returns { lastBotReplyTime, thread }
+    // Fetch all comments once; returns { lastBotReplyTime, thread, existingReview }
     // lastBotReplyTime: ms timestamp of most recent bot comment (0 if none)
     // thread: formatted string of all comments for reply context
+    // existingReview: bot's review comment (identified by <!-- auto-review-bot --> marker), or null
     async getCommentsContext(repoFullName, issueNumber) {
         const { owner, repo } = this._parseRepo(repoFullName);
         logger.info(`Fetching comments for ${repoFullName}#${issueNumber}...`);
@@ -105,7 +94,8 @@ export class GitHubClient {
             ))
         );
         const thread = comments.map(c => `[${c.user.login}]: ${c.body}`).join('\n\n');
-        return { lastBotReplyTime, thread };
+        const existingReview = botComments.find(c => c.body.includes('<!-- auto-review-bot -->')) ?? null;
+        return { lastBotReplyTime, thread, existingReview };
     }
 
     // Get default branch of a repo
