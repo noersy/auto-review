@@ -144,15 +144,18 @@ pipeline {
                     def prNumber   = env.GH_PR_NUMBER ?: env.GH_ISSUE_NUMBER
                     def containerName = 'auto-review-bot-ci'
 
-                    withEnv(["BOT_COMMENT_BODY=${env.GH_COMMENT_BODY ?: ''}", "PROVIDER=${env.GH_PROVIDER}"]) {
-                        // Always start fresh container
+                    withEnv(["PROVIDER=${env.GH_PROVIDER}"]) {
+                        // Write comment body to a file to avoid shell injection via special chars
+                        def commentBodyFile = "${env.WORKSPACE}/.bot-comment-body.txt"
+                        writeFile file: commentBodyFile, text: env.GH_COMMENT_BODY ?: ''
+
+                        // Always start fresh container — do NOT pass GITHUB_TOKEN here (visible via docker inspect)
                         sh "docker rm -f ${containerName} 2>/dev/null || true"
                         sh """
                             docker run --rm -d --name ${containerName} \\
                                 --memory=900m \\
                                 --memory-reservation=600m \\
                                 -e CI=true \\
-                                -e GITHUB_TOKEN="${env.GITHUB_TOKEN}" \\
                                 -e GOOGLE_GENAI_USE_GCA=true \\
                                 -v "${env.WORKSPACE}:/repo:rw" \\
                                 auto-review-bot:ci sleep infinity
@@ -168,12 +171,13 @@ pipeline {
                             docker exec ${containerName} true || (echo "Container not ready after 10 attempts." && exit 1)
                         """
 
-                        // Inject credentials via docker cp
+                        // Inject credentials and comment body via docker cp
                         sh """
-                            docker cp "${env.WORKSPACE}/.claude-credentials.json" ${containerName}:/home/botuser/.claude/.credentials.json
-                            docker cp "${env.WORKSPACE}/.gemini-credentials.json" ${containerName}:/home/botuser/.gemini/oauth_creds.json
-                            docker cp "${env.WORKSPACE}/.gemini-settings.json"    ${containerName}:/home/botuser/.gemini/settings.json
-                            docker exec --user root ${containerName} chown -R botuser:botuser /home/botuser/.claude /home/botuser/.gemini
+                            docker cp "${env.WORKSPACE}/.claude-credentials.json"  ${containerName}:/home/botuser/.claude/.credentials.json
+                            docker cp "${env.WORKSPACE}/.gemini-credentials.json"  ${containerName}:/home/botuser/.gemini/oauth_creds.json
+                            docker cp "${env.WORKSPACE}/.gemini-settings.json"     ${containerName}:/home/botuser/.gemini/settings.json
+                            docker cp "${commentBodyFile}"                          ${containerName}:/home/botuser/.bot-comment-body.txt
+                            docker exec --user root ${containerName} chown -R botuser:botuser /home/botuser/.claude /home/botuser/.gemini /home/botuser/.bot-comment-body.txt
                         """
 
                         // For Flow C (auto-fix): clone target repo inside container at /repo
@@ -228,7 +232,6 @@ pipeline {
                             docker exec \\
                                 --user botuser \\
                                 -e GITHUB_TOKEN="${env.GITHUB_TOKEN}" \\
-                                -e BOT_COMMENT_BODY="\$BOT_COMMENT_BODY" \\
                                 -e CI=true \\
                                 -e GOOGLE_GENAI_USE_GCA=true \\
                                 ${containerName} \\
@@ -236,7 +239,7 @@ pipeline {
                                 --action "${action}" \\
                                 --repo "${env.GH_REPO}" \\
                                 --pr "${prNumber}" \\
-                                --comment-body "\$BOT_COMMENT_BODY" \\
+                                --comment-body-file /home/botuser/.bot-comment-body.txt \\
                                 --sender "${env.GH_SENDER}" \\
                                 --label-name "${env.GH_LABEL_NAME}" \\
                                 --provider "\$PROVIDER" \\
@@ -284,7 +287,7 @@ pipeline {
         always {
             sh "docker rm -f auto-review-bot-ci 2>/dev/null || true"
             sh "rm -rf ${env.WORKSPACE}/agent-credentials 2>/dev/null || true"
-            sh "rm -f ${env.WORKSPACE}/.claude-credentials.json ${env.WORKSPACE}/.gemini-credentials.json ${env.WORKSPACE}/.gemini-settings.json 2>/dev/null || true"
+            sh "rm -f ${env.WORKSPACE}/.claude-credentials.json ${env.WORKSPACE}/.gemini-credentials.json ${env.WORKSPACE}/.gemini-settings.json ${env.WORKSPACE}/.bot-comment-body.txt 2>/dev/null || true"
         }
         failure {
             echo 'Bot execution FAILED.'

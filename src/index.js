@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { readFileSync } from 'fs';
 import { GitHubClient } from './github.js';
 import { buildReviewPrompt, buildReplyPrompt, buildIssueFixPrompt, buildIssueValidationPrompt, buildSummaryPrompt } from './prompts.js';
 import { logger } from './logger.js';
@@ -15,6 +16,7 @@ program
     .requiredOption('--repo <repo>')
     .requiredOption('--pr <number>')
     .option('--comment-body <body>', '')
+    .option('--comment-body-file <path>', 'Path to file containing comment body (avoids shell injection)')
     .option('--sender <login>', '')
     .option('--label-name <label>', '')
     .option('--provider <provider>', 'LLM CLI provider to use (claude/gemini)', 'claude')
@@ -23,6 +25,16 @@ program
 
 program.parse();
 const opts = program.opts();
+
+// Resolve comment body: prefer --comment-body-file over --comment-body
+if (opts.commentBodyFile) {
+    try {
+        opts.commentBody = readFileSync(opts.commentBodyFile, 'utf8');
+    } catch (err) {
+        logger.warn(`Could not read --comment-body-file "${opts.commentBodyFile}": ${err.message}`);
+        opts.commentBody = '';
+    }
+}
 
 // Validate --repo format (must be "owner/repo")
 if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(opts.repo)) {
