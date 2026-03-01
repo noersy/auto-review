@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { readFileSync } from 'fs';
 import { GitHubClient } from './github.js';
-import { buildReviewPrompt, buildReplyPrompt, buildIssueFixPrompt, buildIssueValidationPrompt, buildSummaryPrompt } from './prompts.js';
+import { buildReviewPrompt, buildReplyPrompt, buildIssueFixPrompt, buildIssueFixRetryPrompt, buildIssueValidationPrompt, buildSummaryPrompt } from './prompts.js';
 import { logger } from './logger.js';
 import config from './config.js';
 import { runProviderCLI } from './provider.js';
@@ -21,7 +21,8 @@ program
     .option('--label-name <label>', '')
     .option('--provider <provider>', 'LLM CLI provider to use (claude/gemini)', 'claude')
     .option('--merged', 'Whether the PR was merged (for closed action)', false)
-    .option('--head-branch <branch>', 'Head branch of the closed PR', '');
+    .option('--head-branch <branch>', 'Head branch of the closed PR', '')
+    .option('--dry-run', 'Skip all GitHub and Git writes; LLM calls still run', false);
 
 program.parse();
 const opts = program.opts();
@@ -59,12 +60,16 @@ if (!KNOWN_ACTIONS.has(opts.action)) {
 
 const REPO_DIR = process.env.REPO_DIR ?? '/repo';
 
-async function runReview(gh, repo, prNumber, provider) {
+async function runReview(gh, repo, prNumber, provider, dryRun) {
     const { isMassive, prData } = await gh.checkMassivePR(repo, prNumber);
     if (isMassive) {
-        await gh.postComment(repo, prNumber,
-            `⚠️ **Auto-Review Dibatalkan**\n\nPR ini mengubah total ${prData.additions + prData.deletions} baris kode (batas maksimum ${config.MASSIVE_PR_LINES}). Terlalu masif untuk di-review secara otomatis saat ini.\nSilakan review secara manual atau pecah PR menjadi bagian yang lebih kecil.`
-        );
+        if (dryRun) {
+            logger.info(`[DRY-RUN] Would post massive-PR warning to ${repo}#${prNumber}`);
+        } else {
+            await gh.postComment(repo, prNumber,
+                `⚠️ **Auto-Review Dibatalkan**\n\nPR ini mengubah total ${prData.additions + prData.deletions} baris kode (batas maksimum ${config.MASSIVE_PR_LINES}). Terlalu masif untuk di-review secara otomatis saat ini.\nSilakan review secara manual atau pecah PR menjadi bagian yang lebih kecil.`
+            );
+        }
         logger.warn('Massive PR detected — aborted review.');
         return;
     }
@@ -86,27 +91,42 @@ async function runReview(gh, repo, prNumber, provider) {
         ]));
     } catch (err) {
         const isTimeout = err.message?.includes('timed out');
-        await gh.postComment(repo, prNumber,
-            isTimeout
-                ? `⚠️ **Auto-Review Timeout**\n\nLLM CLI tidak merespons dalam 10 menit. Silakan coba lagi dengan menambahkan label \`auto-review\`.`
-                : `⚠️ **Auto-Review Gagal**\n\nTerjadi error: ${err.message}`
-        );
+        const errBody = isTimeout
+            ? `⚠️ **Auto-Review Timeout**\n\nLLM CLI tidak merespons dalam 10 menit. Silakan coba lagi dengan menambahkan label \`auto-review\`.`
+            : `⚠️ **Auto-Review Gagal**\n\nTerjadi error: ${err.message}`;
+        if (dryRun) {
+            logger.info(`[DRY-RUN] Would post error comment to ${repo}#${prNumber}`);
+        } else {
+            await gh.postComment(repo, prNumber, errBody);
+        }
         logger.error(`runReview failed: ${err.stack || err.message}`);
         return;
     }
 
     if (summaryText) {
-        await gh.updatePRDescription(repo, prNumber, summaryText);
-        logger.info('PR description updated with auto-generated summary.');
+        if (dryRun) {
+            logger.info(`[DRY-RUN] Would update PR description for ${repo}#${prNumber}`);
+        } else {
+            await gh.updatePRDescription(repo, prNumber, summaryText);
+            logger.info('PR description updated with auto-generated summary.');
+        }
     }
 
     const reviewBody = `<!-- auto-review-bot -->\n## 🤖 ${provider.toUpperCase()} Auto Review\n\n${reviewText}`;
     if (existingReview) {
-        await gh.updateComment(repo, existingReview.id, reviewBody);
-        logger.info('Existing review comment updated.');
+        if (dryRun) {
+            logger.info(`[DRY-RUN] Would update existing review comment ${existingReview.id} on ${repo}#${prNumber}`);
+        } else {
+            await gh.updateComment(repo, existingReview.id, reviewBody);
+            logger.info('Existing review comment updated.');
+        }
     } else {
-        await gh.postComment(repo, prNumber, reviewBody);
-        logger.info('Review posted successfully.');
+        if (dryRun) {
+            logger.info(`[DRY-RUN] Would post new review comment to ${repo}#${prNumber}`);
+        } else {
+            await gh.postComment(repo, prNumber, reviewBody);
+            logger.info('Review posted successfully.');
+        }
     }
 }
 
@@ -116,6 +136,8 @@ async function main() {
         process.exit(1);
     }
     const gh = new GitHubClient(process.env.GITHUB_TOKEN);
+    const dryRun = opts.dryRun;
+    if (dryRun) logger.info('DRY-RUN MODE: GitHub and Git writes are disabled.');
 
     try {
         const isNewPR = ['opened', 'synchronize', 'reopened'].includes(opts.action);
@@ -127,7 +149,7 @@ async function main() {
         // ===================================
         if (isNewPR) {
             logger.info(`Triggered FLOW A: New PR Review for ${opts.repo}#${opts.pr}`);
-            await runReview(gh, opts.repo, opts.pr, opts.provider);
+            await runReview(gh, opts.repo, opts.pr, opts.provider, dryRun);
             return;
         }
 
@@ -154,14 +176,21 @@ async function main() {
                 replyText = await runProviderCLI(opts.provider, prompt);
             } catch (err) {
                 const isTimeout = err.message?.includes('timed out');
-                await gh.postComment(opts.repo, opts.pr,
-                    isTimeout
-                        ? `⚠️ **Reply Timeout**\n\nLLM CLI tidak merespons dalam 10 menit.`
-                        : `⚠️ **Reply Gagal**\n\nError: ${err.message}`
-                );
+                const errBody = isTimeout
+                    ? `⚠️ **Reply Timeout**\n\nLLM CLI tidak merespons dalam 10 menit.`
+                    : `⚠️ **Reply Gagal**\n\nError: ${err.message}`;
+                if (dryRun) {
+                    logger.info(`[DRY-RUN] Would post reply error comment to ${opts.repo}#${opts.pr}`);
+                } else {
+                    await gh.postComment(opts.repo, opts.pr, errBody);
+                }
                 return;
             }
-            await gh.postComment(opts.repo, opts.pr, replyText);
+            if (dryRun) {
+                logger.info(`[DRY-RUN] Would post reply comment to ${opts.repo}#${opts.pr}`);
+            } else {
+                await gh.postComment(opts.repo, opts.pr, replyText);
+            }
             logger.info('Reply posted successfully');
             return;
         }
@@ -192,7 +221,11 @@ async function main() {
             if (validationResult.isValid === false) {
                 logger.info(`Issue #${opts.pr} validation failed: ${validationResult.reason}`);
                 const rejectionMsg = `⚠️ **Auto-Fix Dibatalkan**\n\nIssue ini tidak memiliki konteks yang cukup untuk diperbaiki secara otomatis oleh bot.\n\n**Alasan:** ${validationResult.reason}\n\nSilakan lengkapi deskripsi issue (misalnya dengan menambahkan logs, pesan error, langkah reproduksi, atau letak file yang bermasalah) lalu tambahkan kembali label \`auto-fix\`.`;
-                await gh.postComment(opts.repo, opts.pr, rejectionMsg);
+                if (dryRun) {
+                    logger.info(`[DRY-RUN] Would post validation rejection to ${opts.repo}#${opts.pr}`);
+                } else {
+                    await gh.postComment(opts.repo, opts.pr, rejectionMsg);
+                }
                 return;
             }
 
@@ -232,8 +265,29 @@ async function main() {
                 await runProviderCLI(opts.provider, prompt);
             } catch (err) {
                 logger.error(`LLM CLI failed during auto-fix: ${err.message}`);
-                await gh.postComment(opts.repo, opts.pr, `⚠️ **Auto-Fix Gagal**\n\nTerjadi error saat menjalankan LLM: ${err.message}\n\nSilakan cek log Jenkins untuk detail.`);
+                if (dryRun) {
+                    logger.info(`[DRY-RUN] Would post LLM error comment to ${opts.repo}#${opts.pr}`);
+                } else {
+                    await gh.postComment(opts.repo, opts.pr, `⚠️ **Auto-Fix Gagal**\n\nTerjadi error saat menjalankan LLM: ${err.message}\n\nSilakan cek log Jenkins untuk detail.`);
+                }
                 return;
+            }
+
+            // Retry if LLM made no changes on first attempt
+            const firstAttemptFiles = getChangedFiles();
+            if (!firstAttemptFiles || firstAttemptFiles.length === 0) {
+                logger.warn('No changes on first attempt — retrying with stricter prompt...');
+                try {
+                    await runProviderCLI(opts.provider, buildIssueFixRetryPrompt(issueData.title, issueData.body ?? '', REPO_DIR));
+                } catch (err) {
+                    logger.error(`LLM CLI failed during retry: ${err.message}`);
+                    if (dryRun) {
+                        logger.info(`[DRY-RUN] Would post retry error comment to ${opts.repo}#${opts.pr}`);
+                    } else {
+                        await gh.postComment(opts.repo, opts.pr, `⚠️ **Auto-Fix Gagal**\n\nTerjadi error saat retry LLM: ${err.message}`);
+                    }
+                    return;
+                }
             }
 
             // Generate PR description from the changes made
@@ -247,22 +301,39 @@ async function main() {
             // Check for changes and commit
             const changedFiles = getChangedFiles();
             if (!changedFiles || changedFiles.length === 0) {
-                await gh.postComment(opts.repo, opts.pr, '🤖 Maaf, saya tidak dapat menemukan solusi atau perubahan kode yang diperlukan untuk issue ini.');
+                if (dryRun) {
+                    logger.info(`[DRY-RUN] Would post no-changes comment to ${opts.repo}#${opts.pr}`);
+                } else {
+                    await gh.postComment(opts.repo, opts.pr, '🤖 Maaf, saya tidak dapat menemukan solusi atau perubahan kode yang diperlukan untuk issue ini.');
+                }
                 logger.info('No changes made by LLM.');
                 return;
             }
 
-            if (!commitAndPush(branchName, `Fix: ${issueData.title} (Resolves #${opts.pr})`, changedFiles)) {
+            const commitMsg = `Fix: ${issueData.title} (Resolves #${opts.pr})`;
+            const pushOk = dryRun
+                ? (logger.info(`[DRY-RUN] Would commit "${commitMsg}" and push ${branchName}`), true)
+                : commitAndPush(branchName, commitMsg, changedFiles);
+            if (!pushOk) {
                 logger.error('Failed to commit or push changes.');
-                await gh.postComment(opts.repo, opts.pr, '⚠️ **Auto-Fix Gagal**\n\nSaya berhasil membuat perubahan kode, namun gagal saat mencoba commit atau push ke repository. Silakan cek log Jenkins untuk detail.');
+                if (!dryRun) {
+                    await gh.postComment(opts.repo, opts.pr, '⚠️ **Auto-Fix Gagal**\n\nSaya berhasil membuat perubahan kode, namun gagal saat mencoba commit atau push ke repository. Silakan cek log Jenkins untuk detail.');
+                }
                 return;
             }
             logger.info('Changes committed and pushed to remote.');
 
+            const prTitle = `Fix: ${issueData.title}`;
             const prBody = `Resolves #${opts.pr}\n\n${prDescription ?? `Dibuat secara otomatis oleh Auto-Reviewer Bot (${opts.provider}).`}`;
-            const prResponse = await gh.createPullRequest(opts.repo, `Fix: ${issueData.title}`, prBody, branchName, baseBranch);
+            const prResponse = dryRun
+                ? (logger.info(`[DRY-RUN] Would create PR: "${prTitle}" (${branchName} -> ${baseBranch})`), { html_url: '[dry-run]' })
+                : await gh.createPullRequest(opts.repo, prTitle, prBody, branchName, baseBranch);
 
-            await gh.postComment(opts.repo, opts.pr, `🤖 Saya telah mencoba memperbaiki issue ini. Silakan review Pull Request berikut: ${prResponse.html_url}`);
+            if (dryRun) {
+                logger.info(`[DRY-RUN] Would post PR link comment to ${opts.repo}#${opts.pr}`);
+            } else {
+                await gh.postComment(opts.repo, opts.pr, `🤖 Saya telah mencoba memperbaiki issue ini. Silakan review Pull Request berikut: ${prResponse.html_url}`);
+            }
             logger.info(`Pull request created successfully: ${prResponse.html_url}`);
             return;
         }
@@ -272,7 +343,7 @@ async function main() {
         // ===================================
         if (opts.action === 'labeled' && opts.labelName === config.AUTO_REVIEW_LABEL) {
             logger.info(`Triggered FLOW D: Manual Review via label for ${opts.repo}#${opts.pr}`);
-            await runReview(gh, opts.repo, opts.pr, opts.provider);
+            await runReview(gh, opts.repo, opts.pr, opts.provider, dryRun);
             return;
         }
 
@@ -290,7 +361,11 @@ async function main() {
             logger.info(`Triggered FLOW E: Auto-close Issue #${issueNumber} after PR #${opts.pr} merged.`);
 
             const comment = `🤖 Issue ini ditutup secara otomatis karena Pull Request #${opts.pr} telah di-merge.`;
-            await gh.closeIssue(opts.repo, issueNumber, comment);
+            if (dryRun) {
+                logger.info(`[DRY-RUN] Would close issue #${issueNumber} on ${opts.repo}`);
+            } else {
+                await gh.closeIssue(opts.repo, issueNumber, comment);
+            }
             return;
         }
 
