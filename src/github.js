@@ -137,6 +137,16 @@ export class GitHubClient {
         return data;
     }
 
+    // Update the body (description) of a PR
+    async updatePRDescription(repoFullName, prNumber, body) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        logger.info(`Updating PR description for ${repoFullName}#${prNumber}...`);
+        await withRetry(
+            () => this.octokit.pulls.update({ owner, repo, pull_number: prNumber, body }),
+            `PATCH PR #${prNumber} description`
+        );
+    }
+
     // Check if PR is "massive"
     async checkMassivePR(repoFullName, prNumber) {
         const pr = await this.getPR(repoFullName, prNumber);

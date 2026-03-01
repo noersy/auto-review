@@ -26,6 +26,19 @@ Write your final response to the user in Markdown format and return it as your f
 DO NOT ask for confirmation. Just answer directly.`;
 }
 
+export function buildSummaryPrompt(prTitle, targetBranch) {
+    return `You are an expert Principal Software Engineer.
+I have checked out a Pull Request branch titled "${prTitle}".
+The repository is located at /repo. Inspect the changes using \`git diff origin/${targetBranch}...\` inside /repo.
+
+Write a concise Pull Request description in Markdown that includes:
+1. A short paragraph summarizing what this PR does and why.
+2. A bullet list of the key changes.
+
+Keep it factual and brief. Do not include review feedback or opinions.
+DO NOT ask for confirmation. Return the description text directly.`;
+}
+
 export function buildIssueFixPrompt(issueTitle, issueBody) {
     return `You are an expert Principal Software Engineer.
 An issue has been opened in the repository with the following details:

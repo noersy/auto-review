@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { GitHubClient } from './github.js';
-import { buildReviewPrompt, buildReplyPrompt, buildIssueFixPrompt, buildIssueValidationPrompt } from './prompts.js';
+import { buildReviewPrompt, buildReplyPrompt, buildIssueFixPrompt, buildIssueValidationPrompt, buildSummaryPrompt } from './prompts.js';
 import { logger } from './logger.js';
 import config from './config.js';
 import { runProviderCLI } from './provider.js';
@@ -47,10 +47,23 @@ async function runReview(gh, repo, prNumber, provider) {
     }
 
     const targetBranch = prData.base.ref;
-    const prompt = buildReviewPrompt(prData.title, prData.additions, prData.deletions, targetBranch);
-    const reviewText = await runProviderCLI(provider, prompt);
-    const reviewBody = `## 🤖 ${provider.toUpperCase()} Auto Review\n\n${reviewText}`;
+    const isPRBodyEmpty = !prData.body || !prData.body.trim();
 
+    // Run review and (if PR has no description) summary generation in parallel
+    const tasks = [
+        runProviderCLI(provider, buildReviewPrompt(prData.title, prData.additions, prData.deletions, targetBranch)),
+        isPRBodyEmpty
+            ? runProviderCLI(provider, buildSummaryPrompt(prData.title, targetBranch))
+            : Promise.resolve(null),
+    ];
+    const [reviewText, summaryText] = await Promise.all(tasks);
+
+    if (summaryText) {
+        await gh.updatePRDescription(repo, prNumber, summaryText);
+        logger.info('PR description updated with auto-generated summary.');
+    }
+
+    const reviewBody = `## 🤖 ${provider.toUpperCase()} Auto Review\n\n${reviewText}`;
     const existingReview = await gh.findBotReviewComment(repo, prNumber);
     if (existingReview) {
         await gh.updateComment(repo, existingReview.id, reviewBody);
