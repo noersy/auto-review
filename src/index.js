@@ -114,15 +114,14 @@ async function main() {
                 return;
             }
 
-            const lastReplyTime = await gh.getLastBotReplyTime(opts.repo, opts.pr);
-            if (Date.now() - lastReplyTime < config.REPLY_COOLDOWN_MS) {
+            const { lastBotReplyTime, thread } = await gh.getCommentsContext(opts.repo, opts.pr);
+            if (Date.now() - lastBotReplyTime < config.REPLY_COOLDOWN_MS) {
                 logger.info(`Reply cooldown active — ignoring comment on ${opts.repo}#${opts.pr}`);
                 return;
             }
 
             logger.info(`Triggered FLOW B: Reply Comment for ${opts.repo}#${opts.pr}`);
 
-            const thread = await gh.getCommentThread(opts.repo, opts.pr);
             const prompt = buildReplyPrompt(thread);
             const replyText = await runProviderCLI(opts.provider, prompt);
             await gh.postComment(opts.repo, opts.pr, replyText);
@@ -140,7 +139,7 @@ async function main() {
 
             // 1. Issue Validation Step
             logger.info('Validating issue context...');
-            const validationPrompt = buildIssueValidationPrompt(issueData.title, issueData.body);
+            const validationPrompt = buildIssueValidationPrompt(issueData.title, issueData.body ?? '');
             const validationResultRaw = await runProviderCLI(opts.provider, validationPrompt);
 
             let validationResult;
@@ -169,7 +168,7 @@ async function main() {
             }
 
             // 3. Proceed with Auto Fix
-            const prompt = buildIssueFixPrompt(issueData.title, issueData.body);
+            const prompt = buildIssueFixPrompt(issueData.title, issueData.body ?? '');
 
             // Resolve base branch early — sub-issue branches off parent fix branch
             let baseBranch;

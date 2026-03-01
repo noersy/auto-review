@@ -85,9 +85,12 @@ export class GitHubClient {
         );
     }
 
-    // Returns the timestamp (ms) of the most recent bot comment, or 0 if none found
-    async getLastBotReplyTime(repoFullName, issueNumber) {
+    // Fetch all comments once; returns { lastBotReplyTime, thread }
+    // lastBotReplyTime: ms timestamp of most recent bot comment (0 if none)
+    // thread: formatted string of all comments for reply context
+    async getCommentsContext(repoFullName, issueNumber) {
         const { owner, repo } = this._parseRepo(repoFullName);
+        logger.info(`Fetching comments for ${repoFullName}#${issueNumber}...`);
         const comments = await withRetry(
             () => this.octokit.paginate(this.octokit.issues.listComments, {
                 owner, repo, issue_number: issueNumber, per_page: 100
@@ -95,21 +98,14 @@ export class GitHubClient {
             `LIST comments #${issueNumber}`
         );
         const botComments = comments.filter(c => c.user.login === config.BOT_USERNAME);
-        if (botComments.length === 0) return 0;
-        return Math.max(...botComments.map(c => new Date(c.created_at).getTime()));
-    }
-
-    // Get comment thread (for reply context)
-    async getCommentThread(repoFullName, issueNumber) {
-        const { owner, repo } = this._parseRepo(repoFullName);
-        logger.info(`Fetching comments for ${repoFullName}#${issueNumber}...`);
-        const comments = await withRetry(
-            () => this.octokit.paginate(this.octokit.issues.listComments, {
-                owner, repo, issue_number: issueNumber, per_page: 100
-            }),
-            `GET comments #${issueNumber}`
+        const lastBotReplyTime = botComments.length === 0 ? 0 : Math.max(
+            ...botComments.map(c => Math.max(
+                new Date(c.created_at).getTime(),
+                new Date(c.updated_at).getTime()
+            ))
         );
-        return comments.map(c => `[${c.user.login}]: ${c.body}`).join('\n\n');
+        const thread = comments.map(c => `[${c.user.login}]: ${c.body}`).join('\n\n');
+        return { lastBotReplyTime, thread };
     }
 
     // Get default branch of a repo

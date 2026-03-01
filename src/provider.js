@@ -13,11 +13,12 @@ export async function runProviderCLI(provider, promptText) {
         '--verbose'
     ];
 
+    const repoDir = process.env.REPO_DIR ?? '/repo';
     const geminiArgs = [
         '--yes', '@google/gemini-cli', '-p', promptText,
         '-y',
         '-o', 'stream-json',
-        '--include-directories', '/repo',
+        '--include-directories', repoDir,
         '--model', 'gemini-2.5-pro'
     ];
 
