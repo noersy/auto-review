@@ -38,7 +38,7 @@ pipeline {
                     dir('agent-credentials') {
                         checkout([
                             $class: 'GitSCM',
-                            branches: [[name: 'master']],
+                            branches: [[name: 'main']],
                             userRemoteConfigs: [[
                                 url: "https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/agent-credentials.git"
                             ]],
@@ -279,7 +279,7 @@ pipeline {
                             git add claude.json gemini-oauth.json gemini-settings.json
                             if ! git diff --cached --quiet; then
                                 git commit -m "chore: refresh credentials after successful job build #${env.BUILD_NUMBER}"
-                                git push origin master
+                                git push origin main
                                 echo "[CRED] Credentials updated in agent-credentials repo."
                             else
                                 echo "[CRED] No credential changes detected, skipping push."
