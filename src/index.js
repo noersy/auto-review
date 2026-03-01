@@ -73,15 +73,27 @@ async function runReview(gh, repo, prNumber, provider) {
     const isPRBodyEmpty = !prData.body || !prData.body.trim();
 
     // Fetch comments and run review (+ optional summary) in parallel
-    const [{ existingReview }, [reviewText, summaryText]] = await Promise.all([
-        gh.getCommentsContext(repo, prNumber),
-        Promise.all([
-            runProviderCLI(provider, buildReviewPrompt(prData.title, prData.additions, prData.deletions, targetBranch, REPO_DIR)),
-            isPRBodyEmpty
-                ? runProviderCLI(provider, buildSummaryPrompt(prData.title, targetBranch, REPO_DIR))
-                : Promise.resolve(null),
-        ]),
-    ]);
+    let existingReview, reviewText, summaryText;
+    try {
+        ([{ existingReview }, [reviewText, summaryText]] = await Promise.all([
+            gh.getCommentsContext(repo, prNumber),
+            Promise.all([
+                runProviderCLI(provider, buildReviewPrompt(prData.title, prData.additions, prData.deletions, targetBranch, REPO_DIR)),
+                isPRBodyEmpty
+                    ? runProviderCLI(provider, buildSummaryPrompt(prData.title, targetBranch, REPO_DIR))
+                    : Promise.resolve(null),
+            ]),
+        ]));
+    } catch (err) {
+        const isTimeout = err.message?.includes('timed out');
+        await gh.postComment(repo, prNumber,
+            isTimeout
+                ? `⚠️ **Auto-Review Timeout**\n\nLLM CLI tidak merespons dalam 10 menit. Silakan coba lagi dengan menambahkan label \`auto-review\`.`
+                : `⚠️ **Auto-Review Gagal**\n\nTerjadi error: ${err.message}`
+        );
+        logger.error(`runReview failed: ${err.stack || err.message}`);
+        return;
+    }
 
     if (summaryText) {
         await gh.updatePRDescription(repo, prNumber, summaryText);
@@ -137,7 +149,18 @@ async function main() {
             logger.info(`Triggered FLOW B: Reply Comment for ${opts.repo}#${opts.pr}`);
 
             const prompt = buildReplyPrompt(thread, REPO_DIR);
-            const replyText = await runProviderCLI(opts.provider, prompt);
+            let replyText;
+            try {
+                replyText = await runProviderCLI(opts.provider, prompt);
+            } catch (err) {
+                const isTimeout = err.message?.includes('timed out');
+                await gh.postComment(opts.repo, opts.pr,
+                    isTimeout
+                        ? `⚠️ **Reply Timeout**\n\nLLM CLI tidak merespons dalam 10 menit.`
+                        : `⚠️ **Reply Gagal**\n\nError: ${err.message}`
+                );
+                return;
+            }
             await gh.postComment(opts.repo, opts.pr, replyText);
             logger.info('Reply posted successfully');
             return;
@@ -213,6 +236,14 @@ async function main() {
                 return;
             }
 
+            // Generate PR description from the changes made
+            let prDescription = null;
+            try {
+                prDescription = await runProviderCLI(opts.provider, buildSummaryPrompt(`Fix: ${issueData.title}`, baseBranch, REPO_DIR));
+            } catch (err) {
+                logger.warn(`Failed to generate PR description: ${err.message}`);
+            }
+
             // Check for changes and commit
             const changedFiles = getChangedFiles();
             if (!changedFiles || changedFiles.length === 0) {
@@ -228,7 +259,7 @@ async function main() {
             }
             logger.info('Changes committed and pushed to remote.');
 
-            const prBody = `Resolves #${opts.pr}\n\nDibuat secara otomatis oleh Auto-Reviewer Bot (${opts.provider}).`;
+            const prBody = `Resolves #${opts.pr}\n\n${prDescription ?? `Dibuat secara otomatis oleh Auto-Reviewer Bot (${opts.provider}).`}`;
             const prResponse = await gh.createPullRequest(opts.repo, `Fix: ${issueData.title}`, prBody, branchName, baseBranch);
 
             await gh.postComment(opts.repo, opts.pr, `🤖 Saya telah mencoba memperbaiki issue ini. Silakan review Pull Request berikut: ${prResponse.html_url}`);

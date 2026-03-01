@@ -2,7 +2,7 @@ import { Octokit } from '@octokit/rest';
 import { logger } from './logger.js';
 import config from './config.js';
 
-const RETRYABLE_STATUS = new Set([502, 503, 504]);
+const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
 
 async function withRetry(fn, label, retries = 3, delayMs = 2000) {
     for (let attempt = 1; attempt <= retries; attempt++) {
@@ -11,8 +11,16 @@ async function withRetry(fn, label, retries = 3, delayMs = 2000) {
         } catch (err) {
             const status = err.status ?? err.response?.status;
             if (attempt < retries && RETRYABLE_STATUS.has(status)) {
-                logger.warn(`${label} failed with ${status} — retrying (${attempt}/${retries})...`);
-                await new Promise(r => setTimeout(r, delayMs * attempt));
+                let waitMs = delayMs * attempt;
+                if (status === 429) {
+                    const retryAfter = err.response?.headers?.['retry-after'];
+                    if (retryAfter) {
+                        const parsed = parseInt(retryAfter, 10);
+                        waitMs = isNaN(parsed) ? delayMs * attempt : parsed * 1000;
+                    }
+                }
+                logger.warn(`${label} failed with ${status} — retrying in ${waitMs}ms (${attempt}/${retries})...`);
+                await new Promise(r => setTimeout(r, waitMs));
             } else {
                 throw err;
             }
