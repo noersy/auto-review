@@ -96,6 +96,16 @@ export class GitHubClient {
         }
     }
 
+    // Find an open PR by head branch name, returns PR data or null
+    async findOpenPR(repoFullName, headBranch) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        const { data } = await withRetry(
+            () => this.octokit.pulls.list({ owner, repo, head: `${owner}:${headBranch}`, state: 'open' }),
+            `LIST PRs for ${headBranch}`
+        );
+        return data.length > 0 ? data[0] : null;
+    }
+
     // Create a Pull Request
     async createPullRequest(repoFullName, title, body, head, base = 'main') {
         const { owner, repo } = this._parseRepo(repoFullName);

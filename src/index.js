@@ -1,10 +1,11 @@
-import { spawn, spawnSync, execSync } from 'child_process';
+import { spawn } from 'child_process';
 import { Command } from 'commander';
 import { GitHubClient } from './github.js';
 import { buildReviewPrompt, buildReplyPrompt, buildIssueFixPrompt, buildIssueValidationPrompt } from './prompts.js';
 import { logger } from './logger.js';
 import config from './config.js';
 import { runProviderCLI } from './provider.js';
+import { setupBranch, getChangedFiles, commitAndPush } from './git.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -21,6 +22,18 @@ program
 
 program.parse();
 const opts = program.opts();
+
+// Validate --repo format (must be "owner/repo")
+if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(opts.repo)) {
+    console.error(`Invalid --repo format: "${opts.repo}". Expected "owner/repo".`);
+    process.exit(1);
+}
+
+// Validate --pr is a positive integer
+if (!/^\d+$/.test(opts.pr)) {
+    console.error(`Invalid --pr value: "${opts.pr}". Expected a positive integer.`);
+    process.exit(1);
+}
 
 // CLI Runner logic moved to src/provider.js
 
@@ -87,13 +100,14 @@ async function main() {
             const validationPrompt = buildIssueValidationPrompt(issueData.title, issueData.body);
             const validationResultRaw = await runProviderCLI(opts.provider, validationPrompt);
 
-            let validationResult = { isValid: true };
+            let validationResult;
             try {
                 const jsonStrMatch = validationResultRaw.match(/\{[\s\S]*\}/);
                 const jsonStr = jsonStrMatch ? jsonStrMatch[0] : validationResultRaw;
                 validationResult = JSON.parse(jsonStr);
             } catch (err) {
-                logger.warn('Failed to parse validation result. Assuming valid and proceeding. Raw output: ' + validationResultRaw);
+                logger.error('Failed to parse validation result — aborting to avoid acting on ambiguous output. Raw: ' + validationResultRaw);
+                return;
             }
 
             if (validationResult.isValid === false) {
@@ -103,7 +117,15 @@ async function main() {
                 return;
             }
 
-            // 2. Proceed with Auto Fix
+            // 2. Idempotency check — skip if a fix PR already exists
+            const branchName = `auto-fix/issue-${opts.pr}`;
+            const existingPR = await gh.findOpenPR(opts.repo, branchName);
+            if (existingPR) {
+                logger.info(`Open PR already exists for ${branchName}: ${existingPR.html_url} — skipping.`);
+                return;
+            }
+
+            // 3. Proceed with Auto Fix
             const prompt = buildIssueFixPrompt(issueData.title, issueData.body);
 
             // Resolve base branch early — sub-issue branches off parent fix branch
@@ -124,50 +146,30 @@ async function main() {
             }
 
             // Setup Git context and branch
-            const branchName = `auto-fix/issue-${opts.pr}`;
-            try {
-                process.chdir('/repo');
-                execSync('git config --global user.email "bot@auto-reviewer.local"');
-                execSync('git config --global user.name "Auto Reviewer Bot"');
-                execSync('git config --global --add safe.directory /repo');
-                execSync(`git remote set-url origin https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/${opts.repo}.git`);
-                execSync('git fetch origin');
-
-                // Always create branch fresh from baseBranch
-                execSync(`git checkout -B ${branchName} origin/${baseBranch}`);
-                logger.info(`Checked out branch: ${branchName} (from ${baseBranch})`);
-            } catch (err) {
-                logger.error(`Failed to setup git branch: ${err.message}`);
-                return;
-            }
+            if (!setupBranch(branchName, baseBranch, opts.repo, process.env.GITHUB_TOKEN)) return;
 
             // Let the LLM do the magic
             await runProviderCLI(opts.provider, prompt);
 
             // Check for changes and commit
-            try {
-                const diff = execSync('git status --porcelain').toString();
-                if (!diff.trim()) {
-                    await gh.postComment(opts.repo, opts.pr, '🤖 Maaf, saya tidak dapat menemukan solusi atau perubahan kode yang diperlukan untuk issue ini.');
-                    logger.info('No changes made by LLM.');
-                    return;
-                }
-
-                // Exclude credential files from commit
-                execSync('git add .');
-                execSync('git reset HEAD .claude-credentials.json .gemini-credentials.json .gemini-settings.json 2>/dev/null || true', { shell: true });
-                spawnSync('git', ['commit', '-m', `Fix: ${issueData.title} (Resolves #${opts.pr})`], { stdio: 'inherit', shell: false });
-                execSync(`git push -u origin ${branchName} --force`);
-                logger.info('Changes committed and pushed to remote.');
-
-                const prBody = `Resolves #${opts.pr}\n\nDibuat secara otomatis oleh Auto-Reviewer Bot (${opts.provider}).`;
-                const prResponse = await gh.createPullRequest(opts.repo, `Fix: ${issueData.title}`, prBody, branchName, baseBranch);
-
-                await gh.postComment(opts.repo, opts.pr, `🤖 Saya telah mencoba memperbaiki issue ini. Silakan review Pull Request berikut: ${prResponse.html_url}`);
-                logger.info(`Pull request created successfully: ${prResponse.html_url}`);
-            } catch (err) {
-                logger.error(`Failed during commit/push/PR creation: ${err.message}`);
+            const changedFiles = getChangedFiles();
+            if (!changedFiles || changedFiles.length === 0) {
+                await gh.postComment(opts.repo, opts.pr, '🤖 Maaf, saya tidak dapat menemukan solusi atau perubahan kode yang diperlukan untuk issue ini.');
+                logger.info('No changes made by LLM.');
+                return;
             }
+
+            if (!commitAndPush(branchName, `Fix: ${issueData.title} (Resolves #${opts.pr})`, changedFiles)) {
+                logger.error('Failed to commit or push changes.');
+                return;
+            }
+            logger.info('Changes committed and pushed to remote.');
+
+            const prBody = `Resolves #${opts.pr}\n\nDibuat secara otomatis oleh Auto-Reviewer Bot (${opts.provider}).`;
+            const prResponse = await gh.createPullRequest(opts.repo, `Fix: ${issueData.title}`, prBody, branchName, baseBranch);
+
+            await gh.postComment(opts.repo, opts.pr, `🤖 Saya telah mencoba memperbaiki issue ini. Silakan review Pull Request berikut: ${prResponse.html_url}`);
+            logger.info(`Pull request created successfully: ${prResponse.html_url}`);
             return;
         }
 
