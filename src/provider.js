@@ -79,7 +79,7 @@ export async function runProviderCLI(provider, promptText) {
                                 if (block.type === 'text' && block.text) {
                                     finalResult = (finalResult || '') + block.text;
                                     if (block.text.trim()) {
-                                        process.stderr.write(`[Claude] ${block.text}`);
+                                        logger.info(`[Claude] ${block.text.trim()}`);
                                     }
                                 } else if (block.type === 'tool_use') {
                                     logger.info(`[Claude] tool: ${block.name} (${JSON.stringify(block.input).slice(0, 120)})`);

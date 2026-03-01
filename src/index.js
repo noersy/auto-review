@@ -218,7 +218,7 @@ async function main() {
                 return;
             }
 
-            if (validationResult.isValid === false) {
+            if (!validationResult.isValid) {
                 logger.info(`Issue #${opts.pr} validation failed: ${validationResult.reason}`);
                 const rejectionMsg = `⚠️ **Auto-Fix Dibatalkan**\n\nIssue ini tidak memiliki konteks yang cukup untuk diperbaiki secara otomatis oleh bot.\n\n**Alasan:** ${validationResult.reason}\n\nSilakan lengkapi deskripsi issue (misalnya dengan menambahkan logs, pesan error, langkah reproduksi, atau letak file yang bermasalah) lalu tambahkan kembali label \`auto-fix\`.`;
                 if (dryRun) {
@@ -258,7 +258,13 @@ async function main() {
             }
 
             // Setup Git context and branch
-            if (!setupBranch(branchName, baseBranch, opts.repo, process.env.GITHUB_TOKEN)) return;
+            if (!setupBranch(branchName, baseBranch, opts.repo, process.env.GITHUB_TOKEN)) {
+                logger.error('setupBranch failed — aborting auto-fix.');
+                if (!dryRun) {
+                    await gh.postComment(opts.repo, opts.pr, '⚠️ **Auto-Fix Gagal**\n\nGagal menyiapkan branch Git. Silakan cek log Jenkins untuk detail.');
+                }
+                return;
+            }
 
             // Let the LLM do the magic
             try {
@@ -284,7 +290,7 @@ async function main() {
                     if (dryRun) {
                         logger.info(`[DRY-RUN] Would post retry error comment to ${opts.repo}#${opts.pr}`);
                     } else {
-                        await gh.postComment(opts.repo, opts.pr, `⚠️ **Auto-Fix Gagal**\n\nTerjadi error saat retry LLM: ${err.message}`);
+                        await gh.postComment(opts.repo, opts.pr, `⚠️ **Auto-Fix Gagal**\n\nTerjadi error saat retry LLM: ${err.message}\n\nSilakan cek log Jenkins untuk detail.`);
                     }
                     return;
                 }
@@ -311,9 +317,13 @@ async function main() {
             }
 
             const commitMsg = `Fix: ${issueData.title} (Resolves #${opts.pr})`;
-            const pushOk = dryRun
-                ? (logger.info(`[DRY-RUN] Would commit "${commitMsg}" and push ${branchName}`), true)
-                : commitAndPush(branchName, commitMsg, changedFiles);
+            let pushOk;
+            if (dryRun) {
+                logger.info(`[DRY-RUN] Would commit "${commitMsg}" and push ${branchName}`);
+                pushOk = true;
+            } else {
+                pushOk = commitAndPush(branchName, commitMsg, changedFiles);
+            }
             if (!pushOk) {
                 logger.error('Failed to commit or push changes.');
                 if (!dryRun) {

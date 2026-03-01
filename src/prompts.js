@@ -90,7 +90,7 @@ ${issueBody}
 </issue>
 
 Your task is to validate whether this issue provides enough context to be fixed automatically by an AI agent.
-An issue is VALID if: (1) It describes a clear bug or feature request, AND (2) Provide enough context (like logs, steps to reproduce, or specific files to edit) to start working.
+An issue is VALID if: (1) It describes a clear bug or feature request, AND (2) Provides enough context (like logs, steps to reproduce, or specific files to edit) to start working.
 An issue is INVALID if: (1) It is just a general question or discussion, OR (2) It is too vague ("it doesn't work") without any logs or context.
 
 Respond ONLY with a JSON object in this exact format, with no markdown formatting or other text.

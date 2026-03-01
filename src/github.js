@@ -120,7 +120,10 @@ export class GitHubClient {
     async branchExists(repoFullName, branch) {
         const { owner, repo } = this._parseRepo(repoFullName);
         try {
-            await this.octokit.repos.getBranch({ owner, repo, branch });
+            await withRetry(
+                () => this.octokit.repos.getBranch({ owner, repo, branch }),
+                `GET branch ${branch}`
+            );
             return true;
         } catch (err) {
             if (err.status === 404) return false;
