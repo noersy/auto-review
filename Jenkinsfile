@@ -158,6 +158,16 @@ pipeline {
                                 auto-review-bot:ci sleep infinity
                         """
 
+                        // Wait for container to be ready before issuing exec/cp commands
+                        sh """
+                            for i in \$(seq 1 10); do
+                                docker exec ${containerName} true 2>/dev/null && break
+                                echo "Waiting for container to be ready (attempt \$i/10)..."
+                                sleep 1
+                            done
+                            docker exec ${containerName} true || (echo "Container not ready after 10 attempts." && exit 1)
+                        """
+
                         // Inject credentials via docker cp
                         sh """
                             docker cp "${env.WORKSPACE}/.claude-credentials.json" ${containerName}:/home/botuser/.claude/.credentials.json
@@ -185,7 +195,7 @@ pipeline {
                             """
                         }
 
-                        // Setup bot app inside container (always run npm ci to ensure deps are current)
+                        // Setup bot app inside container; skip npm ci if package-lock.json unchanged
                         sh """
                             docker exec --user botuser \\
                                 -e GITHUB_TOKEN="${env.GITHUB_TOKEN}" \\
@@ -197,7 +207,16 @@ pipeline {
                                     else
                                         git clone --branch main https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/auto-review.git /app
                                     fi
-                                    cd /app && npm ci --omit=dev
+                                    cd /app
+                                    LOCK_HASH=\$(sha256sum package-lock.json | cut -d" " -f1)
+                                    SAVED_HASH=\$(cat .npm-lock-hash 2>/dev/null || echo "")
+                                    if [ "\$LOCK_HASH" != "\$SAVED_HASH" ] || [ ! -d node_modules ]; then
+                                        echo "package-lock.json changed or node_modules missing — running npm ci..."
+                                        npm ci --omit=dev
+                                        echo "\$LOCK_HASH" > .npm-lock-hash
+                                    else
+                                        echo "package-lock.json unchanged — skipping npm ci."
+                                    fi
                                 '
                         """
 
