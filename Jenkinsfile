@@ -92,6 +92,22 @@ pipeline {
                     def storageDriver = sh(script: "docker info --format '{{.Driver}}' 2>/dev/null || echo 'unknown'", returnStdout: true).trim()
                     env.DOCKER_USE_VOLUME_MOUNT = (storageDriver == 'overlayfs') ? 'true' : 'false'
                     echo "[DOCKER] Storage driver: ${storageDriver} → USE_VOLUME_MOUNT=${env.DOCKER_USE_VOLUME_MOUNT}"
+
+                    // Resolve the host-side path of WORKSPACE for use in docker volume mounts.
+                    // When Jenkins itself runs inside a container with a named volume for /var/jenkins_home,
+                    // env.WORKSPACE contains the in-container path (e.g. /var/jenkins_home/workspace/...).
+                    // docker run -v uses host paths, so we must map it to the real host path via
+                    // the volume's Source mount point.
+                    def jenkinsHomeSrc = sh(
+                        script: "docker inspect \${HOSTNAME} --format '{{range .Mounts}}{{if eq .Destination \"/var/jenkins_home\"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || echo ''",
+                        returnStdout: true
+                    ).trim()
+                    if (jenkinsHomeSrc) {
+                        env.HOST_WORKSPACE = env.WORKSPACE.replace('/var/jenkins_home', jenkinsHomeSrc)
+                    } else {
+                        env.HOST_WORKSPACE = env.WORKSPACE
+                    }
+                    echo "[DOCKER] HOST_WORKSPACE resolved to: ${env.HOST_WORKSPACE}"
                 }
             }
         }
@@ -182,6 +198,8 @@ pipeline {
                             // Mounting individual files causes root:root ownership on overlayfs,
                             // which makes the container crash immediately (botuser cannot access them).
                             // Directory mounts inherit the host directory's ownership correctly.
+                            // Use HOST_WORKSPACE (resolved host-side path) for -v flags since
+                            // WORKSPACE is an in-container path inside the Jenkins container.
                             echo "[DOCKER] Using volume-mount strategy for credential injection."
                             sh """
                                 docker run --rm -d --name ${containerName} \\
@@ -189,9 +207,9 @@ pipeline {
                                     --memory-reservation=600m \\
                                     -e CI=true \\
                                     -e GOOGLE_GENAI_USE_GCA=true \\
-                                    -v "${env.WORKSPACE}:/repo:rw" \\
-                                    -v "${env.WORKSPACE}/.creds/claude:/home/botuser/.claude:rw" \\
-                                    -v "${env.WORKSPACE}/.creds/gemini:/home/botuser/.gemini:rw" \\
+                                    -v "${env.HOST_WORKSPACE}:/repo:rw" \\
+                                    -v "${env.HOST_WORKSPACE}/.creds/claude:/home/botuser/.claude:rw" \\
+                                    -v "${env.HOST_WORKSPACE}/.creds/gemini:/home/botuser/.gemini:rw" \\
                                     auto-review-bot:ci sleep infinity
                             """
                         } else {
@@ -203,7 +221,7 @@ pipeline {
                                     --memory-reservation=600m \\
                                     -e CI=true \\
                                     -e GOOGLE_GENAI_USE_GCA=true \\
-                                    -v "${env.WORKSPACE}:/repo:rw" \\
+                                    -v "${env.HOST_WORKSPACE}:/repo:rw" \\
                                     auto-review-bot:ci sleep infinity
                             """
                         }
@@ -219,18 +237,9 @@ pipeline {
                         """
 
                         if (useVolumeMount) {
-                            // Comment body: write directly into .creds/ dir (which is NOT mounted
-                            // into the container) then copy via docker exec from /repo path.
-                            // Verify the file exists on host before attempting copy.
-                            sh """
-                                echo "[DEBUG] commentBodyFile=${commentBodyFile}"
-                                ls -la '${commentBodyFile}' || echo "[DEBUG] FILE NOT FOUND on host"
-                                docker exec --user root ${containerName} bash -c '
-                                    ls -la /repo/.bot-comment-body.txt || echo "[DEBUG] FILE NOT FOUND in /repo"
-                                    cp /repo/.bot-comment-body.txt /home/botuser/.bot-comment-body.txt
-                                    chown botuser:botuser /home/botuser/.bot-comment-body.txt
-                                '
-                            """
+                            // Comment body is in /repo (HOST_WORKSPACE mounted as /repo).
+                            // Copy it to /home/botuser/ via docker exec to set correct ownership.
+                            sh "docker exec --user root ${containerName} bash -c 'cp /repo/.bot-comment-body.txt /home/botuser/.bot-comment-body.txt && chown botuser:botuser /home/botuser/.bot-comment-body.txt'"
                         } else {
                             // Native Docker: inject credentials and comment body via docker cp
                             sh """
