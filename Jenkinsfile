@@ -96,14 +96,13 @@ pipeline {
                     // Resolve the host-side path of WORKSPACE for use in docker volume mounts.
                     // When Jenkins itself runs inside a container with a named volume for /var/jenkins_home,
                     // env.WORKSPACE contains the in-container path (e.g. /var/jenkins_home/workspace/...).
-                    // docker run -v uses host paths, so we must map it to the real host path via
-                    // the volume's Source mount point.
+                    // docker run -v uses host paths, so we must map it to the real host path.
+                    //
+                    // We read /proc/self/mountinfo (always available in Linux, works on cgroup v1 & v2)
+                    // to find where /var/jenkins_home is actually mounted from on the host.
+                    // This is reliable even when HOSTNAME != container ID (e.g. after container recreation).
                     def jenkinsHomeSrc = sh(
-                        script: """
-                            REAL_ID=\$(cat /proc/1/cgroup 2>/dev/null | grep -oP '(?<=docker[-/])[a-f0-9]{64}' | head -1 || echo '')
-                            INSPECT_TARGET=\${REAL_ID:-\${HOSTNAME}}
-                            docker inspect \$INSPECT_TARGET --format '{{range .Mounts}}{{if eq .Destination "/var/jenkins_home"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || echo ''
-                        """,
+                        script: "grep -oP '/var/lib/docker/volumes/[^/]+/_data' /proc/self/mountinfo | head -1 || echo ''",
                         returnStdout: true
                     ).trim()
                     if (jenkinsHomeSrc) {
