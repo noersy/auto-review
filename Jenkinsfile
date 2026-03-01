@@ -279,7 +279,7 @@ pipeline {
                             git add claude.json gemini-oauth.json gemini-settings.json
                             if ! git diff --cached --quiet; then
                                 git commit -m "chore: refresh credentials after successful job build #${env.BUILD_NUMBER}"
-                                git push origin main
+                                git push origin master
                                 echo "[CRED] Credentials updated in agent-credentials repo."
                             else
                                 echo "[CRED] No credential changes detected, skipping push."
