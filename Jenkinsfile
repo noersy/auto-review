@@ -361,8 +361,8 @@ pipeline {
     post {
         always {
             sh "docker rm -f auto-review-bot-ci 2>/dev/null || true"
-            sh "rm -rf '${env.WORKSPACE}/agent-credentials' '${env.WORKSPACE}/.creds' 2>/dev/null || true"
-            sh "rm -f '${env.WORKSPACE}/.claude-credentials.json' '${env.WORKSPACE}/.gemini-credentials.json' '${env.WORKSPACE}/.gemini-settings.json' '${env.WORKSPACE}/.bot-comment-body.txt' '${env.WORKSPACE}/.updated-claude.json' '${env.WORKSPACE}/.updated-gemini.json' '${env.WORKSPACE}/.updated-settings.json' 2>/dev/null || true"
+            sh "rm -rf '${env.WORKSPACE}/agent-credentials' '${env.WORKSPACE}/.creds' '${env.WORKSPACE}/.bot-comment-body.txt' 2>/dev/null || true"
+            sh "rm -f '${env.WORKSPACE}/.claude-credentials.json' '${env.WORKSPACE}/.gemini-credentials.json' '${env.WORKSPACE}/.gemini-settings.json' '${env.WORKSPACE}/.updated-claude.json' '${env.WORKSPACE}/.updated-gemini.json' '${env.WORKSPACE}/.updated-settings.json' 2>/dev/null || true"
         }
         failure {
             echo 'Bot execution FAILED.'
