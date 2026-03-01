@@ -36,6 +36,31 @@ if (!/^\d+$/.test(opts.pr)) {
 
 // CLI Runner logic moved to src/provider.js
 
+async function runReview(gh, repo, prNumber, provider) {
+    const { isMassive, prData } = await gh.checkMassivePR(repo, prNumber);
+    if (isMassive) {
+        await gh.postComment(repo, prNumber,
+            `⚠️ **Auto-Review Dibatalkan**\n\nPR ini mengubah total ${prData.additions + prData.deletions} baris kode (batas maksimum ${config.MASSIVE_PR_LINES}). Terlalu masif untuk di-review secara otomatis saat ini.\nSilakan review secara manual atau pecah PR menjadi bagian yang lebih kecil.`
+        );
+        logger.warn('Massive PR detected — aborted review.');
+        return;
+    }
+
+    const targetBranch = prData.base.ref;
+    const prompt = buildReviewPrompt(prData.title, prData.additions, prData.deletions, targetBranch);
+    const reviewText = await runProviderCLI(provider, prompt);
+    const reviewBody = `## 🤖 ${provider.toUpperCase()} Auto Review\n\n${reviewText}`;
+
+    const existingReview = await gh.findBotReviewComment(repo, prNumber);
+    if (existingReview) {
+        await gh.updateComment(repo, existingReview.id, reviewBody);
+        logger.info('Existing review comment updated.');
+    } else {
+        await gh.postComment(repo, prNumber, reviewBody);
+        logger.info('Review posted successfully.');
+    }
+}
+
 async function main() {
     const gh = new GitHubClient(process.env.GITHUB_TOKEN);
 
@@ -49,29 +74,7 @@ async function main() {
         // ===================================
         if (isNewPR) {
             logger.info(`Triggered FLOW A: New PR Review for ${opts.repo}#${opts.pr}`);
-
-            const { isMassive, prData } = await gh.checkMassivePR(opts.repo, opts.pr);
-            if (isMassive) {
-                await gh.postComment(opts.repo, opts.pr,
-                    `⚠️ **Auto-Review Dibatalkan**\n\nPR ini mengubah total ${prData.additions + prData.deletions} baris kode (batas maksimum ${config.MASSIVE_PR_LINES}). Terlalu masif untuk di-review secara otomatis saat ini.\nSilakan review secara manual atau pecah PR menjadi bagian yang lebih kecil.`
-                );
-                logger.warn('Massive PR detected — aborted review.');
-                return;
-            }
-
-            const targetBranch = prData.base.ref;
-            const prompt = buildReviewPrompt(prData.title, prData.additions, prData.deletions, targetBranch);
-            const reviewText = await runProviderCLI(opts.provider, prompt);
-            const reviewBody = `## 🤖 ${opts.provider.toUpperCase()} Auto Review\n\n${reviewText}`;
-
-            const existingReview = await gh.findBotReviewComment(opts.repo, opts.pr);
-            if (existingReview) {
-                await gh.updateComment(opts.repo, existingReview.id, reviewBody);
-                logger.info('Existing review comment updated.');
-            } else {
-                await gh.postComment(opts.repo, opts.pr, reviewBody);
-                logger.info('Review posted successfully.');
-            }
+            await runReview(gh, opts.repo, opts.pr, opts.provider);
             return;
         }
 
@@ -184,6 +187,15 @@ async function main() {
 
             await gh.postComment(opts.repo, opts.pr, `🤖 Saya telah mencoba memperbaiki issue ini. Silakan review Pull Request berikut: ${prResponse.html_url}`);
             logger.info(`Pull request created successfully: ${prResponse.html_url}`);
+            return;
+        }
+
+        // ===================================
+        // FLOW D: Manual Review via Label
+        // ===================================
+        if (opts.action === 'labeled' && opts.labelName === config.AUTO_REVIEW_LABEL) {
+            logger.info(`Triggered FLOW D: Manual Review via label for ${opts.repo}#${opts.pr}`);
+            await runReview(gh, opts.repo, opts.pr, opts.provider);
             return;
         }
 

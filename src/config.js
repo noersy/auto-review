@@ -7,5 +7,6 @@ export default {
     BOT_MENTION: '@fei-reviewer',
 
     // Labels
-    AUTO_FIX_LABEL: 'auto-fix'
+    AUTO_FIX_LABEL: 'auto-fix',
+    AUTO_REVIEW_LABEL: 'auto-review'
 };
