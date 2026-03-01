@@ -137,6 +137,20 @@ export class GitHubClient {
         return data;
     }
 
+    // Close an issue with a comment
+    async closeIssue(repoFullName, issueNumber, comment) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        await withRetry(
+            () => this.octokit.issues.createComment({ owner, repo, issue_number: issueNumber, body: comment }),
+            `POST comment #${issueNumber}`
+        );
+        await withRetry(
+            () => this.octokit.issues.update({ owner, repo, issue_number: issueNumber, state: 'closed' }),
+            `CLOSE issue #${issueNumber}`
+        );
+        logger.info(`Issue #${issueNumber} closed.`);
+    }
+
     // Update the body (description) of a PR
     async updatePRDescription(repoFullName, prNumber, body) {
         const { owner, repo } = this._parseRepo(repoFullName);

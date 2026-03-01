@@ -17,7 +17,9 @@ program
     .option('--comment-body <body>', '')
     .option('--sender <login>', '')
     .option('--label-name <label>', '')
-    .option('--provider <provider>', 'LLM CLI provider to use (claude/gemini)', 'claude');
+    .option('--provider <provider>', 'LLM CLI provider to use (claude/gemini)', 'claude')
+    .option('--merged', 'Whether the PR was merged (for closed action)', false)
+    .option('--head-branch <branch>', 'Head branch of the closed PR', '');
 
 program.parse();
 const opts = program.opts();
@@ -209,6 +211,24 @@ async function main() {
         if (opts.action === 'labeled' && opts.labelName === config.AUTO_REVIEW_LABEL) {
             logger.info(`Triggered FLOW D: Manual Review via label for ${opts.repo}#${opts.pr}`);
             await runReview(gh, opts.repo, opts.pr, opts.provider);
+            return;
+        }
+
+        // ===================================
+        // FLOW E: Auto-close Issue on PR Merge
+        // ===================================
+        if (opts.action === 'closed' && opts.merged) {
+            const match = opts.headBranch.match(/^auto-fix\/issue-(\d+)$/);
+            if (!match) {
+                logger.info(`Closed PR branch "${opts.headBranch}" is not an auto-fix branch — skipping.`);
+                return;
+            }
+
+            const issueNumber = parseInt(match[1], 10);
+            logger.info(`Triggered FLOW E: Auto-close Issue #${issueNumber} after PR #${opts.pr} merged.`);
+
+            const comment = `🤖 Issue ini ditutup secara otomatis karena Pull Request #${opts.pr} telah di-merge.`;
+            await gh.closeIssue(opts.repo, issueNumber, comment);
             return;
         }
 
