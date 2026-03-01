@@ -10,12 +10,14 @@ pipeline {
             genericVariables: [
                 [key: 'GH_ACTION',       value: '$.action'],
                 [key: 'GH_REPO',         value: '$.repository.full_name'],
-                [key: 'GH_PR_NUMBER',    value: '$.pull_request.number', defaultValue: ''],
-                [key: 'GH_COMMENT_BODY', value: '$.comment.body',        defaultValue: ''],
-                [key: 'GH_ISSUE_NUMBER', value: '$.issue.number',        defaultValue: ''],
-                [key: 'GH_LABEL_NAME',   value: '$.label.name',          defaultValue: ''],
-                [key: 'GH_SENDER',       value: '$.sender.login',        defaultValue: ''],
-                [key: 'GH_PROVIDER',     value: '$.provider',            defaultValue: 'claude']
+                [key: 'GH_PR_NUMBER',    value: '$.pull_request.number',   defaultValue: ''],
+                [key: 'GH_COMMENT_BODY', value: '$.comment.body',          defaultValue: ''],
+                [key: 'GH_ISSUE_NUMBER', value: '$.issue.number',          defaultValue: ''],
+                [key: 'GH_LABEL_NAME',   value: '$.label.name',            defaultValue: ''],
+                [key: 'GH_SENDER',       value: '$.sender.login',          defaultValue: ''],
+                [key: 'GH_MERGED',       value: '$.pull_request.merged',   defaultValue: 'false'],
+                [key: 'GH_HEAD_BRANCH',  value: '$.pull_request.head.ref', defaultValue: ''],
+                [key: 'GH_PROVIDER',     value: '$.provider',              defaultValue: 'claude']
             ],
             token: 'headless-agent-webhook',
             causeString: 'PR Event from $GH_REPO using Provider $GH_PROVIDER',
@@ -26,9 +28,8 @@ pipeline {
 
     environment {
         GITHUB_TOKEN = credentials('GITHUB_TOKEN')
-        CI = 'true'
-        GH_PROVIDER = "gemini"
-        CREDENTIALS_REPO = "https://x-access-token:${GITHUB_TOKEN}@github.com/noersy/agent-credentials.git"
+        CI           = 'true'
+        GH_PROVIDER  = 'gemini'
     }
 
     stages {
@@ -44,11 +45,46 @@ pipeline {
                             ]],
                             extensions: [[$class: 'CleanBeforeCheckout']]
                         ])
-                        env.CLAUDE_JSON_CONFIG    = readFile('claude.json').trim()
-                        env.GEMINI_OAUTH_JSON     = readFile('gemini-oauth.json').trim()
-                        env.GEMINI_SETTINGS_JSON  = readFile('gemini-settings.json').trim()
+                        env.CLAUDE_JSON_CONFIG   = readFile('claude.json').trim()
+                        env.GEMINI_OAUTH_JSON    = readFile('gemini-oauth.json').trim()
+                        env.GEMINI_SETTINGS_JSON = readFile('gemini-settings.json').trim()
                     }
                     echo "[CRED] Credentials loaded from agent-credentials repo."
+                }
+            }
+        }
+
+        stage('Resolve Action') {
+            steps {
+                script {
+                    // Normalize nulls from webhook
+                    def action     = (env.GH_ACTION     == 'null' || !env.GH_ACTION)     ? '' : env.GH_ACTION
+                    def prNum      = (env.GH_PR_NUMBER  == 'null' || !env.GH_PR_NUMBER)  ? '' : env.GH_PR_NUMBER
+                    def issueNum   = (env.GH_ISSUE_NUMBER == 'null' || !env.GH_ISSUE_NUMBER) ? '' : env.GH_ISSUE_NUMBER
+                    def labelName  = (env.GH_LABEL_NAME == 'null' || !env.GH_LABEL_NAME) ? '' : env.GH_LABEL_NAME
+                    def headBranch = (env.GH_HEAD_BRANCH == 'null' || !env.GH_HEAD_BRANCH) ? '' : env.GH_HEAD_BRANCH
+                    def merged     = (env.GH_MERGED == 'true')
+
+                    if (!action && prNum) action = 'opened'
+
+                    env.GH_ACTION      = action
+                    env.GH_PR_NUMBER   = prNum
+                    env.GH_ISSUE_NUMBER = issueNum
+                    env.GH_LABEL_NAME  = labelName
+                    env.GH_HEAD_BRANCH = headBranch
+                    env.GH_MERGED      = merged ? 'true' : 'false'
+
+                    def handled = (action in ['opened', 'synchronize', 'reopened', 'created']) ||
+                                  (action == 'labeled' && labelName in ['auto-fix', 'auto-review']) ||
+                                  (action == 'closed'  && merged && headBranch)
+
+                    if (!handled) {
+                        echo "Action '${action}' (label: '${labelName}') is not handled — aborting pipeline."
+                        currentBuild.result = 'NOT_BUILT'
+                        error("Unhandled action — stopping early.")
+                    }
+
+                    echo "Action resolved: ${action} | PR: ${prNum} | Issue: ${issueNum} | Label: ${labelName} | Merged: ${merged} | Head: ${headBranch}"
                 }
             }
         }
@@ -56,68 +92,33 @@ pipeline {
         stage('Checkout Target Repository') {
             when {
                 expression {
-                    def action = (env.GH_ACTION == 'null' || env.GH_ACTION == null) ? '' : env.GH_ACTION
-                    def prNum = (env.GH_PR_NUMBER == 'null' || env.GH_PR_NUMBER == null) ? '' : env.GH_PR_NUMBER
-                    if (!action && prNum) action = 'opened'
-
-                    if (!(action in ['opened', 'synchronize', 'created', 'reopened']) &&
-                        !(action == 'labeled' && env.GH_LABEL_NAME == 'auto-fix')) {
-                        echo "Action '${env.GH_ACTION}' is not handled or label is not auto-fix — skipping pipeline."
-                        return false
-                    }
-                    return true
+                    // Only Flow A/D need workspace checkout (for /repo mount)
+                    // Flow B (reply), Flow C (auto-fix), Flow E (close issue) do not need it
+                    def action = env.GH_ACTION
+                    return (action in ['opened', 'synchronize', 'reopened']) ||
+                           (action == 'labeled' && env.GH_LABEL_NAME == 'auto-review')
                 }
             }
             steps {
                 script {
-                    def prNumber = env.GH_PR_NUMBER ?: env.GH_ISSUE_NUMBER
-                    if (!prNumber || prNumber == 'null') {
-                        error "No PR or Issue number provided by webhook."
-                    }
-
-                    def action = (env.GH_ACTION == 'null' || env.GH_ACTION == null) ? '' : env.GH_ACTION
-                    if (!action && env.GH_PR_NUMBER && env.GH_PR_NUMBER != 'null') {
-                        action = 'opened'
-                        env.GH_ACTION = 'opened' // Attempt to set it for subsequent stages
-                    }
-
-                    if (action in ['opened', 'synchronize', 'reopened'] && env.GH_PR_NUMBER && env.GH_PR_NUMBER != 'null') {
-                        // Flow A: checkout PR merge commit so Claude sees the actual diff
-                        echo "Checking out ${env.GH_REPO} PR #${prNumber}..."
-                        checkout([
-                            $class: 'GitSCM',
-                            branches: [[name: "origin/pr/${prNumber}/merge"]],
-                            userRemoteConfigs: [[
-                                url: "https://x-access-token:${env.GITHUB_TOKEN}@github.com/${env.GH_REPO}.git",
-                                refspec: "+refs/pull/${prNumber}/merge:refs/remotes/origin/pr/${prNumber}/merge +refs/heads/*:refs/remotes/origin/*"
-                            ]],
-                            extensions: [[$class: 'CleanBeforeCheckout']]
-                        ])
-                    } else if (action == 'labeled' && env.GH_LABEL_NAME == 'auto-fix') {
-                        // Flow C: repo is cloned inside the persistent container at /repo — no workspace checkout needed.
-                        echo "Issue #${prNumber} Auto-Fix: skipping workspace checkout, repo will be cloned inside container."
-                    } else {
-                        // Flow B (created / issue_comment) or unsupported action for Issues
-                        echo "Flow B (reply) or Issue event: skipping repo checkout."
-                    }
+                    def prNumber = env.GH_PR_NUMBER
+                    echo "Checking out ${env.GH_REPO} PR #${prNumber}..."
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "origin/pr/${prNumber}/merge"]],
+                        userRemoteConfigs: [[
+                            url: "https://x-access-token:${env.GITHUB_TOKEN}@github.com/${env.GH_REPO}.git",
+                            refspec: "+refs/pull/${prNumber}/merge:refs/remotes/origin/pr/${prNumber}/merge +refs/heads/*:refs/remotes/origin/*"
+                        ]],
+                        extensions: [[$class: 'CleanBeforeCheckout']]
+                    ])
                 }
             }
         }
 
         stage('Build Bot Image') {
-            when {
-                expression {
-                    def action = (env.GH_ACTION == 'null' || env.GH_ACTION == null) ? '' : env.GH_ACTION
-                    def prNum = (env.GH_PR_NUMBER == 'null' || env.GH_PR_NUMBER == null) ? '' : env.GH_PR_NUMBER
-                    if (!action && prNum) action = 'opened'
-
-                    return (action in ['opened', 'synchronize', 'created', 'reopened']) ||
-                           (action == 'labeled' && env.GH_LABEL_NAME == 'auto-fix')
-                }
-            }
             steps {
-                // Write credential files before docker build so they exist on host
-                // when the container mounts them via -v
+                // Write credential files to workspace so docker cp can inject them
                 writeFile file: "${env.WORKSPACE}/.claude-credentials.json", text: env.CLAUDE_JSON_CONFIG
                 writeFile file: "${env.WORKSPACE}/.gemini-credentials.json", text: env.GEMINI_OAUTH_JSON
                 writeFile file: "${env.WORKSPACE}/.gemini-settings.json",    text: env.GEMINI_SETTINGS_JSON
@@ -125,7 +126,7 @@ pipeline {
                 dir('auto-review-bot') {
                     checkout([
                         $class: 'GitSCM',
-                        branches: [[name: 'auto-fix-by-issue']],
+                        branches: [[name: 'main']],
                         userRemoteConfigs: [[
                             url: "https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/auto-review.git"
                         ]],
@@ -137,32 +138,14 @@ pipeline {
         }
 
         stage('Run Auto-Review Bot') {
-            when {
-                expression {
-                    def action = (env.GH_ACTION == 'null' || env.GH_ACTION == null) ? '' : env.GH_ACTION
-                    def prNum = (env.GH_PR_NUMBER == 'null' || env.GH_PR_NUMBER == null) ? '' : env.GH_PR_NUMBER
-                    if (!action && prNum) action = 'opened'
-
-                    return (action in ['opened', 'synchronize', 'created', 'reopened']) ||
-                           (action == 'labeled' && env.GH_LABEL_NAME == 'auto-fix')
-                }
-            }
             steps {
                 script {
-                    def action = (env.GH_ACTION == 'null' || env.GH_ACTION == null) ? '' : env.GH_ACTION
-                    if (!action && env.GH_PR_NUMBER && env.GH_PR_NUMBER != 'null') action = 'opened'
-
-                    def prNumber = (env.GH_PR_NUMBER && env.GH_PR_NUMBER != 'null') ? env.GH_PR_NUMBER : env.GH_ISSUE_NUMBER
+                    def action     = env.GH_ACTION
+                    def prNumber   = env.GH_PR_NUMBER ?: env.GH_ISSUE_NUMBER
                     def containerName = 'auto-review-bot-ci'
 
-                    // Pass comment-body via env var to avoid shell quoting issues
-                    withEnv(["BOT_COMMENT_BODY=${env.GH_COMMENT_BODY}", "PROVIDER=${env.GH_PROVIDER}"]) {
-                        def containerExists = sh(
-                            script: "docker ps -a --filter name=^${containerName}\$ --format '{{.Names}}'",
-                            returnStdout: true
-                        ).trim()
-
-                        // Always recreate container fresh
+                    withEnv(["BOT_COMMENT_BODY=${env.GH_COMMENT_BODY ?: ''}", "PROVIDER=${env.GH_PROVIDER}"]) {
+                        // Always start fresh container
                         sh "docker rm -f ${containerName} 2>/dev/null || true"
                         sh """
                             docker run --rm -d --name ${containerName} \\
@@ -170,55 +153,57 @@ pipeline {
                                 --memory-reservation=600m \\
                                 -e CI=true \\
                                 -e GITHUB_TOKEN="${env.GITHUB_TOKEN}" \\
-                                -e BOT_COMMENT_BODY \\
                                 -e GOOGLE_GENAI_USE_GCA=true \\
                                 -v "${env.WORKSPACE}:/repo:rw" \\
                                 auto-review-bot:ci sleep infinity
                         """
 
-                        // Inject credentials via docker cp (avoids bind-mount directory issue)
+                        // Inject credentials via docker cp
                         sh """
-                            docker exec --user root ${containerName} mkdir -p /home/botuser/.claude /home/botuser/.gemini
                             docker cp "${env.WORKSPACE}/.claude-credentials.json" ${containerName}:/home/botuser/.claude/.credentials.json
                             docker cp "${env.WORKSPACE}/.gemini-credentials.json" ${containerName}:/home/botuser/.gemini/oauth_creds.json
                             docker cp "${env.WORKSPACE}/.gemini-settings.json"    ${containerName}:/home/botuser/.gemini/settings.json
                             docker exec --user root ${containerName} chown -R botuser:botuser /home/botuser/.claude /home/botuser/.gemini
-                            echo "[CRED DEBUG] Credentials injected via docker cp"
-                            docker exec --user botuser ${containerName} ls -la /home/botuser/.claude/ /home/botuser/.gemini/
                         """
 
-                        // Clone/reset target repo inside container at /repo
-                        sh """
-                            docker exec --user botuser ${containerName} bash -c  '
-                                git config --global --add safe.directory /repo
-                                if [ -d /repo/.git ]; then
-                                    git -C /repo remote set-url origin https://x-access-token:${env.GITHUB_TOKEN}@github.com/${env.GH_REPO}.git
-                                    git -C /repo fetch origin
-                                    git -C /repo remote set-head origin -a
-                                    DEFAULT_BRANCH=\$(git -C /repo symbolic-ref refs/remotes/origin/HEAD | cut -d/ -f4)
-                                    git -C /repo checkout -B \$DEFAULT_BRANCH origin/\$DEFAULT_BRANCH
-                                else
-                                    git clone https://x-access-token:${env.GITHUB_TOKEN}@github.com/${env.GH_REPO}.git /repo
-                                    git -C /repo remote set-head origin -a
-                                fi
-                            '
-                        """
+                        // For Flow C (auto-fix): clone target repo inside container at /repo
+                        if (action == 'labeled' && env.GH_LABEL_NAME == 'auto-fix') {
+                            sh """
+                                docker exec --user botuser ${containerName} bash -c '
+                                    git config --global --add safe.directory /repo
+                                    if [ -d /repo/.git ]; then
+                                        git -C /repo remote set-url origin https://x-access-token:${env.GITHUB_TOKEN}@github.com/${env.GH_REPO}.git
+                                        git -C /repo fetch origin
+                                        git -C /repo remote set-head origin -a
+                                        DEFAULT_BRANCH=\$(git -C /repo symbolic-ref refs/remotes/origin/HEAD | cut -d/ -f4)
+                                        git -C /repo checkout -B \$DEFAULT_BRANCH origin/\$DEFAULT_BRANCH
+                                    else
+                                        git clone https://x-access-token:${env.GITHUB_TOKEN}@github.com/${env.GH_REPO}.git /repo
+                                        git -C /repo remote set-head origin -a
+                                    fi
+                                '
+                            """
+                        }
 
+                        // Setup bot app inside container (always run npm ci to ensure deps are current)
                         sh """
-                            docker exec \\
-                                --user botuser \\
+                            docker exec --user botuser \\
                                 -e GITHUB_TOKEN="${env.GITHUB_TOKEN}" \\
                                 ${containerName} bash -c '
                                     git config --global --add safe.directory /app
                                     if [ -d /app/.git ]; then
                                         git -C /app fetch origin
-                                        git -C /app checkout -B auto-fix-by-issue origin/auto-fix-by-issue
+                                        git -C /app checkout -B main origin/main
                                     else
-                                        git clone --branch auto-fix-by-issue https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/auto-review.git /app
-                                        cd /app && npm ci --omit=dev
+                                        git clone --branch main https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/auto-review.git /app
                                     fi
+                                    cd /app && npm ci --omit=dev
                                 '
                         """
+
+                        // Build node command args
+                        def mergedFlag  = env.GH_MERGED == 'true' ? '--merged' : ''
+                        def headBranch  = env.GH_HEAD_BRANCH ?: ''
 
                         sh """
                             docker exec \\
@@ -235,8 +220,41 @@ pipeline {
                                 --comment-body "\$BOT_COMMENT_BODY" \\
                                 --sender "${env.GH_SENDER}" \\
                                 --label-name "${env.GH_LABEL_NAME}" \\
-                                --provider "\$PROVIDER"
+                                --provider "\$PROVIDER" \\
+                                --head-branch "${headBranch}" \\
+                                ${mergedFlag}
                         """
+
+                        // Read back potentially refreshed credentials before container is removed
+                        def updatedClaude   = sh(script: "docker exec ${containerName} cat /home/botuser/.claude/.credentials.json 2>/dev/null || echo ''", returnStdout: true).trim()
+                        def updatedGemini   = sh(script: "docker exec ${containerName} cat /home/botuser/.gemini/oauth_creds.json 2>/dev/null || echo ''", returnStdout: true).trim()
+                        def updatedSettings = sh(script: "docker exec ${containerName} cat /home/botuser/.gemini/settings.json 2>/dev/null || echo ''", returnStdout: true).trim()
+
+                        if (updatedClaude && updatedGemini) {
+                            def credDir         = "${env.WORKSPACE}/agent-credentials-update"
+                            def claudeEscaped   = updatedClaude.replace("'", "'\\''")
+                            def geminiEscaped   = updatedGemini.replace("'", "'\\''")
+                            def settingsEscaped = updatedSettings ? updatedSettings.replace("'", "'\\''") : ''
+
+                            sh """
+                                rm -rf '${credDir}'
+                                git clone 'https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/agent-credentials.git' '${credDir}'
+                                printf '%s' '${claudeEscaped}'   > '${credDir}/claude.json'
+                                printf '%s' '${geminiEscaped}'   > '${credDir}/gemini-oauth.json'
+                                printf '%s' '${settingsEscaped}' > '${credDir}/gemini-settings.json'
+                                git -C '${credDir}' config user.email 'jenkins@auto-review-bot'
+                                git -C '${credDir}' config user.name 'Jenkins Auto-Review Bot'
+                                git -C '${credDir}' add claude.json gemini-oauth.json gemini-settings.json
+                                if ! git -C '${credDir}' diff --cached --quiet; then
+                                    git -C '${credDir}' commit -m 'chore: refresh credentials after successful job build #${env.BUILD_NUMBER}'
+                                    git -C '${credDir}' push origin main
+                                    echo '[CRED] Credentials updated in agent-credentials repo.'
+                                else
+                                    echo '[CRED] No credential changes detected, skipping push.'
+                                fi
+                                rm -rf '${credDir}'
+                            """
+                        }
                     }
                 }
             }
@@ -245,13 +263,7 @@ pipeline {
 
     post {
         always {
-            sh """
-                docker exec --user botuser auto-review-bot-ci bash -c '
-                    git -C /repo checkout HEAD -- . 2>/dev/null || true
-                    git -C /repo clean -fd --exclude=".claude-credentials.json" --exclude=".gemini-credentials.json" --exclude=".gemini-settings.json" 2>/dev/null || true
-                    git -C /repo checkout \$(git -C /repo remote show origin | grep "HEAD branch" | awk "{print \$NF}") 2>/dev/null || true
-                ' 2>/dev/null || true
-            """
+            sh "docker rm -f auto-review-bot-ci 2>/dev/null || true"
             sh "rm -rf ${env.WORKSPACE}/agent-credentials 2>/dev/null || true"
             sh "rm -f ${env.WORKSPACE}/.claude-credentials.json ${env.WORKSPACE}/.gemini-credentials.json ${env.WORKSPACE}/.gemini-settings.json 2>/dev/null || true"
         }
@@ -259,41 +271,7 @@ pipeline {
             echo 'Bot execution FAILED.'
         }
         success {
-            script {
-                echo 'Bot execution SUCCESS.'
-                // Read updated credentials from container (may have been refreshed by OAuth)
-                def updatedClaude   = sh(script: "docker exec auto-review-bot-ci cat /home/botuser/.claude/.credentials.json 2>/dev/null || echo ''", returnStdout: true).trim()
-                def updatedGemini   = sh(script: "docker exec auto-review-bot-ci cat /home/botuser/.gemini/oauth_creds.json 2>/dev/null || echo ''", returnStdout: true).trim()
-                def updatedSettings = sh(script: "docker exec auto-review-bot-ci cat /home/botuser/.gemini/settings.json 2>/dev/null || echo ''", returnStdout: true).trim()
-
-                // Update only if content is non-empty
-                if (updatedClaude && updatedGemini) {
-                    def credDir = "${env.WORKSPACE}/agent-credentials-update"
-                    // Escape single quotes in JSON for shell heredoc
-                    def claudeEscaped   = updatedClaude.replace("'", "'\\''")
-                    def geminiEscaped   = updatedGemini.replace("'", "'\\''")
-                    def settingsEscaped = updatedSettings ? updatedSettings.replace("'", "'\\''") : ''
-
-                    sh """
-                        rm -rf '${credDir}'
-                        git clone 'https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/agent-credentials.git' '${credDir}'
-                        printf '%s' '${claudeEscaped}'   > '${credDir}/claude.json'
-                        printf '%s' '${geminiEscaped}'   > '${credDir}/gemini-oauth.json'
-                        printf '%s' '${settingsEscaped}' > '${credDir}/gemini-settings.json'
-                        git -C '${credDir}' config user.email 'jenkins@auto-review-bot'
-                        git -C '${credDir}' config user.name 'Jenkins Auto-Review Bot'
-                        git -C '${credDir}' add claude.json gemini-oauth.json gemini-settings.json
-                        if ! git -C '${credDir}' diff --cached --quiet; then
-                            git -C '${credDir}' commit -m 'chore: refresh credentials after successful job build #${env.BUILD_NUMBER}'
-                            git -C '${credDir}' push origin main
-                            echo '[CRED] Credentials updated in agent-credentials repo.'
-                        else
-                            echo '[CRED] No credential changes detected, skipping push.'
-                        fi
-                        rm -rf '${credDir}'
-                    """
-                }
-            }
+            echo 'Bot execution SUCCESS.'
         }
     }
 }

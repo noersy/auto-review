@@ -11,25 +11,14 @@ RUN apt-get update && apt-get install -y \
 # refuses to run as root)
 RUN useradd -m -s /bin/bash botuser
 
-# Set working directory for the bot
-WORKDIR /app
+# Create writable credential dirs for botuser
+RUN mkdir -p /home/botuser/.claude /home/botuser/.gemini && \
+    chown -R botuser:botuser /home/botuser/.claude /home/botuser/.gemini
 
-COPY docker-entrypoint.sh /docker-entrypoint.sh
+# /app and /repo are populated at runtime via Jenkinsfile (git clone + docker cp)
+# No ENTRYPOINT or CMD — container is started with 'sleep infinity' and
+# commands are run via 'docker exec'
 
-# /app will be populated by git clone at runtime via Jenkinsfile
-# Give botuser ownership of /app and create writable .claude and .gemini dirs
-RUN chown -R botuser:botuser /app && \
-    mkdir -p /home/botuser/.claude && \
-    chown -R botuser:botuser /home/botuser/.claude && \
-    mkdir -p /home/botuser/.gemini && \
-    chown -R botuser:botuser /home/botuser/.gemini && \
-    chmod +x /docker-entrypoint.sh
-
-USER botuser
-
-# Claude Code CLI auth — credentials.json mounted at /run/secrets/claude-credentials
-# and copied to writable ~/.claude/ by entrypoint
 ENV CI=true
 
-ENTRYPOINT ["/docker-entrypoint.sh"]
-CMD ["node", "/app/src/index.js", "--help"]
+USER botuser
