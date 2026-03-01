@@ -62,8 +62,16 @@ async function main() {
             const targetBranch = prData.base.ref;
             const prompt = buildReviewPrompt(prData.title, prData.additions, prData.deletions, targetBranch);
             const reviewText = await runProviderCLI(opts.provider, prompt);
-            await gh.postComment(opts.repo, opts.pr, `## 🤖 ${opts.provider.toUpperCase()} Auto Review\n\n${reviewText}`);
-            logger.info('Review posted successfully');
+            const reviewBody = `## 🤖 ${opts.provider.toUpperCase()} Auto Review\n\n${reviewText}`;
+
+            const existingReview = await gh.findBotReviewComment(opts.repo, opts.pr);
+            if (existingReview) {
+                await gh.updateComment(opts.repo, existingReview.id, reviewBody);
+                logger.info('Existing review comment updated.');
+            } else {
+                await gh.postComment(opts.repo, opts.pr, reviewBody);
+                logger.info('Review posted successfully.');
+            }
             return;
         }
 

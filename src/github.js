@@ -53,6 +53,26 @@ export class GitHubClient {
         return data;
     }
 
+    // Find the bot's existing review comment on a PR, returns comment data or null
+    async findBotReviewComment(repoFullName, issueNumber) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        const { data } = await withRetry(
+            () => this.octokit.issues.listComments({ owner, repo, issue_number: issueNumber }),
+            `LIST comments #${issueNumber}`
+        );
+        return data.find(c => c.user.login === config.BOT_USERNAME && c.body.startsWith('## 🤖')) ?? null;
+    }
+
+    // Update an existing comment by ID
+    async updateComment(repoFullName, commentId, body) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        logger.info(`Updating comment ${commentId} on ${repoFullName}...`);
+        await withRetry(
+            () => this.octokit.issues.updateComment({ owner, repo, comment_id: commentId, body }),
+            `PATCH comment ${commentId}`
+        );
+    }
+
     // Post a comment on a PR
     async postComment(repoFullName, issueNumber, body) {
         const { owner, repo } = this._parseRepo(repoFullName);
