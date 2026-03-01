@@ -58,11 +58,11 @@ pipeline {
             steps {
                 script {
                     // Normalize nulls from webhook
-                    def action     = (env.GH_ACTION     == 'null' || !env.GH_ACTION)     ? '' : env.GH_ACTION
-                    def prNum      = (env.GH_PR_NUMBER  == 'null' || !env.GH_PR_NUMBER)  ? '' : env.GH_PR_NUMBER
+                    def action     = (env.GH_ACTION     == 'null' || !env.GH_ACTION)        ? '' : env.GH_ACTION
+                    def prNum      = (env.GH_PR_NUMBER  == 'null' || !env.GH_PR_NUMBER)     ? '' : env.GH_PR_NUMBER
                     def issueNum   = (env.GH_ISSUE_NUMBER == 'null' || !env.GH_ISSUE_NUMBER) ? '' : env.GH_ISSUE_NUMBER
-                    def labelName  = (env.GH_LABEL_NAME == 'null' || !env.GH_LABEL_NAME) ? '' : env.GH_LABEL_NAME
-                    def headBranch = (env.GH_HEAD_BRANCH == 'null' || !env.GH_HEAD_BRANCH) ? '' : env.GH_HEAD_BRANCH
+                    def labelName  = (env.GH_LABEL_NAME == 'null' || !env.GH_LABEL_NAME)    ? '' : env.GH_LABEL_NAME
+                    def headBranch = (env.GH_HEAD_BRANCH == 'null' || !env.GH_HEAD_BRANCH)  ? '' : env.GH_HEAD_BRANCH
                     def merged     = (env.GH_MERGED == 'true')
 
                     if (!action && prNum) action = 'opened'
@@ -86,9 +86,9 @@ pipeline {
 
                     echo "Action resolved: ${action} | PR: ${prNum} | Issue: ${issueNum} | Label: ${labelName} | Merged: ${merged} | Head: ${headBranch}"
 
-                    // Detect whether Docker storage is nested overlayfs (DinD scenario).
-                    // In that case, docker cp into a running container's RWLayer is unreliable,
-                    // so we inject credentials via bind mounts instead.
+                    // Detect nested overlayfs (DinD scenario).
+                    // docker cp into a running container's RWLayer is unreliable on overlayfs-over-overlayfs,
+                    // so we use directory bind mounts for credential injection instead.
                     def storageDriver = sh(script: "docker info --format '{{.Driver}}' 2>/dev/null || echo 'unknown'", returnStdout: true).trim()
                     env.DOCKER_USE_VOLUME_MOUNT = (storageDriver == 'overlayfs') ? 'true' : 'false'
                     echo "[DOCKER] Storage driver: ${storageDriver} → USE_VOLUME_MOUNT=${env.DOCKER_USE_VOLUME_MOUNT}"
@@ -100,7 +100,6 @@ pipeline {
             when {
                 expression {
                     // Only Flow A/D need workspace checkout (for /repo mount)
-                    // Flow B (reply), Flow C (auto-fix), Flow E (close issue) do not need it
                     def action = env.GH_ACTION
                     return (action in ['opened', 'synchronize', 'reopened']) ||
                            (action == 'labeled' && env.GH_LABEL_NAME == 'auto-review')
@@ -125,22 +124,36 @@ pipeline {
 
         stage('Build Bot Image') {
             steps {
-                // Write credential files to workspace — used either by docker cp (native Docker)
-                // or by bind mount (nested overlayfs / DinD)
-                writeFile file: "${env.WORKSPACE}/.claude-credentials.json", text: env.CLAUDE_JSON_CONFIG
-                writeFile file: "${env.WORKSPACE}/.gemini-credentials.json", text: env.GEMINI_OAUTH_JSON
-                writeFile file: "${env.WORKSPACE}/.gemini-settings.json",    text: env.GEMINI_SETTINGS_JSON
+                script {
+                    def useVolumeMount = env.DOCKER_USE_VOLUME_MOUNT == 'true'
 
-                dir('auto-review-bot') {
-                    checkout([
-                        $class: 'GitSCM',
-                        branches: [[name: 'main']],
-                        userRemoteConfigs: [[
-                            url: "https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/auto-review.git"
-                        ]],
-                        extensions: [[$class: 'CleanBeforeCheckout']]
-                    ])
-                    sh "docker build -t auto-review-bot:ci ."
+                    if (useVolumeMount) {
+                        // DinD strategy: write credentials into subdirectory mirrors of the
+                        // container's home layout. Entire directories are bind-mounted so
+                        // Docker inherits the host directory ownership instead of creating
+                        // root-owned entries (which happens when mounting individual files on overlayfs).
+                        sh "mkdir -p '${env.WORKSPACE}/.creds/claude' '${env.WORKSPACE}/.creds/gemini'"
+                        writeFile file: "${env.WORKSPACE}/.creds/claude/.credentials.json", text: env.CLAUDE_JSON_CONFIG
+                        writeFile file: "${env.WORKSPACE}/.creds/gemini/oauth_creds.json",  text: env.GEMINI_OAUTH_JSON
+                        writeFile file: "${env.WORKSPACE}/.creds/gemini/settings.json",     text: env.GEMINI_SETTINGS_JSON
+                    } else {
+                        // Native Docker strategy: flat files for docker cp
+                        writeFile file: "${env.WORKSPACE}/.claude-credentials.json", text: env.CLAUDE_JSON_CONFIG
+                        writeFile file: "${env.WORKSPACE}/.gemini-credentials.json", text: env.GEMINI_OAUTH_JSON
+                        writeFile file: "${env.WORKSPACE}/.gemini-settings.json",    text: env.GEMINI_SETTINGS_JSON
+                    }
+
+                    dir('auto-review-bot') {
+                        checkout([
+                            $class: 'GitSCM',
+                            branches: [[name: 'main']],
+                            userRemoteConfigs: [[
+                                url: "https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/auto-review.git"
+                            ]],
+                            extensions: [[$class: 'CleanBeforeCheckout']]
+                        ])
+                        sh "docker build -t auto-review-bot:ci ."
+                    }
                 }
             }
         }
@@ -148,9 +161,9 @@ pipeline {
         stage('Run Auto-Review Bot') {
             steps {
                 script {
-                    def action        = env.GH_ACTION
-                    def prNumber      = env.GH_PR_NUMBER ?: env.GH_ISSUE_NUMBER
-                    def containerName = 'auto-review-bot-ci'
+                    def action         = env.GH_ACTION
+                    def prNumber       = env.GH_PR_NUMBER ?: env.GH_ISSUE_NUMBER
+                    def containerName  = 'auto-review-bot-ci'
                     def useVolumeMount = env.DOCKER_USE_VOLUME_MOUNT == 'true'
 
                     withEnv(["PROVIDER=${env.GH_PROVIDER}"]) {
@@ -163,8 +176,10 @@ pipeline {
                         sh "timeout 15 bash -c 'while docker inspect ${containerName} >/dev/null 2>&1; do sleep 1; done' || true"
 
                         if (useVolumeMount) {
-                            // DinD / nested overlayfs: inject credentials via bind mounts to avoid
-                            // RWLayer nil errors that make docker cp unreliable in this environment
+                            // DinD / nested overlayfs: mount entire credential directories.
+                            // Mounting individual files causes root:root ownership on overlayfs,
+                            // which makes the container crash immediately (botuser cannot access them).
+                            // Directory mounts inherit the host directory's ownership correctly.
                             echo "[DOCKER] Using volume-mount strategy for credential injection."
                             sh """
                                 docker run --rm -d --name ${containerName} \\
@@ -173,14 +188,12 @@ pipeline {
                                     -e CI=true \\
                                     -e GOOGLE_GENAI_USE_GCA=true \\
                                     -v "${env.WORKSPACE}:/repo:rw" \\
-                                    -v "${env.WORKSPACE}/.claude-credentials.json:/home/botuser/.claude/.credentials.json:rw" \\
-                                    -v "${env.WORKSPACE}/.gemini-credentials.json:/home/botuser/.gemini/oauth_creds.json:rw" \\
-                                    -v "${env.WORKSPACE}/.gemini-settings.json:/home/botuser/.gemini/settings.json:rw" \\
-                                    -v "${commentBodyFile}:/home/botuser/.bot-comment-body.txt:ro" \\
+                                    -v "${env.WORKSPACE}/.creds/claude:/home/botuser/.claude:rw" \\
+                                    -v "${env.WORKSPACE}/.creds/gemini:/home/botuser/.gemini:rw" \\
                                     auto-review-bot:ci sleep infinity
                             """
                         } else {
-                            // Native Docker: use docker cp for credential injection
+                            // Native Docker: credentials injected via docker cp after container starts
                             echo "[DOCKER] Using docker cp strategy for credential injection."
                             sh """
                                 docker run --rm -d --name ${containerName} \\
@@ -203,8 +216,13 @@ pipeline {
                             docker exec ${containerName} true || (echo "Container not ready after 10 attempts." && exit 1)
                         """
 
-                        if (!useVolumeMount) {
-                            // Native Docker: inject credentials via docker cp
+                        if (useVolumeMount) {
+                            // Comment body: copy via docker exec (not bind mount) to avoid
+                            // individual-file mount ownership issues on overlayfs.
+                            // .bot-comment-body.txt is already in /repo (workspace mounted as /repo).
+                            sh "docker exec --user root ${containerName} bash -c 'cp /repo/.bot-comment-body.txt /home/botuser/.bot-comment-body.txt && chown botuser:botuser /home/botuser/.bot-comment-body.txt'"
+                        } else {
+                            // Native Docker: inject credentials and comment body via docker cp
                             sh """
                                 docker cp "${env.WORKSPACE}/.claude-credentials.json"  ${containerName}:/home/botuser/.claude/.credentials.json
                                 docker cp "${env.WORKSPACE}/.gemini-credentials.json"  ${containerName}:/home/botuser/.gemini/oauth_creds.json
@@ -214,7 +232,12 @@ pipeline {
                             """
                         }
 
-                        // For Flow C (auto-fix): clone target repo inside container at /repo
+                        // For Flow C (auto-fix): clone target repo inside container at /repo.
+                        // /repo is bind-mounted from the Jenkins workspace which may contain
+                        // non-git files (.creds/, .bot-comment-body.txt, etc.), so we cannot
+                        // rely on absence of /repo or presence of /repo/.git. Instead:
+                        // - If /repo/.git exists: update in-place (already a valid clone)
+                        // - Otherwise: clone into a temp dir then move contents into /repo
                         if (action == 'labeled' && env.GH_LABEL_NAME == 'auto-fix') {
                             sh """
                                 docker exec --user botuser ${containerName} bash -c '
@@ -226,7 +249,9 @@ pipeline {
                                         DEFAULT_BRANCH=\$(git -C /repo symbolic-ref refs/remotes/origin/HEAD | cut -d/ -f4)
                                         git -C /repo checkout -B \$DEFAULT_BRANCH origin/\$DEFAULT_BRANCH
                                     else
-                                        git clone https://x-access-token:${env.GITHUB_TOKEN}@github.com/${env.GH_REPO}.git /repo
+                                        git clone https://x-access-token:${env.GITHUB_TOKEN}@github.com/${env.GH_REPO}.git /tmp/repo-clone
+                                        cp -a /tmp/repo-clone/. /repo/
+                                        rm -rf /tmp/repo-clone
                                         git -C /repo remote set-head origin -a
                                     fi
                                 '
@@ -282,17 +307,16 @@ pipeline {
                         """
 
                         // Read back potentially refreshed credentials before container is removed.
-                        // Volume-mount: files are already in workspace — just read them directly.
-                        // docker cp: copy them back from the container.
+                        // Volume-mount: .creds/ dirs are bind-mounted rw, changes are already on host.
+                        // docker cp: copy files back from the container.
                         def tmpClaude   = "${env.WORKSPACE}/.updated-claude.json"
                         def tmpGemini   = "${env.WORKSPACE}/.updated-gemini.json"
                         def tmpSettings = "${env.WORKSPACE}/.updated-settings.json"
 
                         if (useVolumeMount) {
-                            // Credentials were written directly to workspace files via bind mount
-                            sh "cp '${env.WORKSPACE}/.claude-credentials.json' '${tmpClaude}' 2>/dev/null || true"
-                            sh "cp '${env.WORKSPACE}/.gemini-credentials.json' '${tmpGemini}' 2>/dev/null || true"
-                            sh "cp '${env.WORKSPACE}/.gemini-settings.json'    '${tmpSettings}' 2>/dev/null || true"
+                            sh "cp '${env.WORKSPACE}/.creds/claude/.credentials.json' '${tmpClaude}' 2>/dev/null || true"
+                            sh "cp '${env.WORKSPACE}/.creds/gemini/oauth_creds.json'  '${tmpGemini}' 2>/dev/null || true"
+                            sh "cp '${env.WORKSPACE}/.creds/gemini/settings.json'     '${tmpSettings}' 2>/dev/null || true"
                         } else {
                             sh "docker cp ${containerName}:/home/botuser/.claude/.credentials.json ${tmpClaude} 2>/dev/null || true"
                             sh "docker cp ${containerName}:/home/botuser/.gemini/oauth_creds.json  ${tmpGemini} 2>/dev/null || true"
@@ -305,7 +329,6 @@ pipeline {
 
                         if (updatedClaude && updatedGemini) {
                             def credDir = "${env.WORKSPACE}/agent-credentials-update"
-
                             sh """
                                 rm -rf '${credDir}'
                                 git clone 'https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/agent-credentials.git' '${credDir}'
@@ -336,8 +359,8 @@ pipeline {
     post {
         always {
             sh "docker rm -f auto-review-bot-ci 2>/dev/null || true"
-            sh "rm -rf ${env.WORKSPACE}/agent-credentials 2>/dev/null || true"
-            sh "rm -f ${env.WORKSPACE}/.claude-credentials.json ${env.WORKSPACE}/.gemini-credentials.json ${env.WORKSPACE}/.gemini-settings.json ${env.WORKSPACE}/.bot-comment-body.txt ${env.WORKSPACE}/.updated-claude.json ${env.WORKSPACE}/.updated-gemini.json ${env.WORKSPACE}/.updated-settings.json 2>/dev/null || true"
+            sh "rm -rf '${env.WORKSPACE}/agent-credentials' '${env.WORKSPACE}/.creds' 2>/dev/null || true"
+            sh "rm -f '${env.WORKSPACE}/.claude-credentials.json' '${env.WORKSPACE}/.gemini-credentials.json' '${env.WORKSPACE}/.gemini-settings.json' '${env.WORKSPACE}/.bot-comment-body.txt' '${env.WORKSPACE}/.updated-claude.json' '${env.WORKSPACE}/.updated-gemini.json' '${env.WORKSPACE}/.updated-settings.json' 2>/dev/null || true"
         }
         failure {
             echo 'Bot execution FAILED.'

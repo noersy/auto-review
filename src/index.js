@@ -131,7 +131,7 @@ async function runReview(gh, repo, prNumber, provider, dryRun) {
 }
 
 async function main() {
-    if (!process.env.GITHUB_TOKEN) {
+    if (!process.env.GITHUB_TOKEN || !process.env.GITHUB_TOKEN.trim()) {
         console.error('Missing required environment variable: GITHUB_TOKEN');
         process.exit(1);
     }
@@ -219,9 +219,19 @@ async function main() {
                 return;
             }
 
+            // Validate parsed object has expected fields; treat missing/unexpected shape as invalid
+            if (typeof validationResult !== 'object' || validationResult === null ||
+                typeof validationResult.isValid !== 'boolean') {
+                logger.error(`Validation result has unexpected shape — aborting. Parsed: ${JSON.stringify(validationResult)}`);
+                return;
+            }
+
             if (!validationResult.isValid) {
-                logger.info(`Issue #${opts.pr} validation failed: ${validationResult.reason}`);
-                const rejectionMsg = `⚠️ **Auto-Fix Dibatalkan**\n\nIssue ini tidak memiliki konteks yang cukup untuk diperbaiki secara otomatis oleh bot.\n\n**Alasan:** ${validationResult.reason}\n\nSilakan lengkapi deskripsi issue (misalnya dengan menambahkan logs, pesan error, langkah reproduksi, atau letak file yang bermasalah) lalu tambahkan kembali label \`auto-fix\`.`;
+                const reason = typeof validationResult.reason === 'string' && validationResult.reason.trim()
+                    ? validationResult.reason.trim()
+                    : 'Tidak ada alasan yang diberikan oleh validator.';
+                logger.info(`Issue #${opts.pr} validation failed: ${reason}`);
+                const rejectionMsg = `⚠️ **Auto-Fix Dibatalkan**\n\nIssue ini tidak memiliki konteks yang cukup untuk diperbaiki secara otomatis oleh bot.\n\n**Alasan:** ${reason}\n\nSilakan lengkapi deskripsi issue (misalnya dengan menambahkan logs, pesan error, langkah reproduksi, atau letak file yang bermasalah) lalu tambahkan kembali label \`auto-fix\`.`;
                 if (dryRun) {
                     logger.info(`[DRY-RUN] Would post validation rejection to ${opts.repo}#${opts.pr}`);
                 } else {
@@ -282,7 +292,14 @@ async function main() {
 
             // Retry if LLM made no changes on first attempt
             const firstAttemptFiles = getChangedFiles();
-            if (!firstAttemptFiles || firstAttemptFiles.length === 0) {
+            if (firstAttemptFiles === null) {
+                logger.error('getChangedFiles() failed (git error) after first attempt — aborting.');
+                if (!dryRun) {
+                    await gh.postComment(opts.repo, opts.pr, '⚠️ **Auto-Fix Gagal**\n\nGagal membaca status git setelah LLM selesai. Silakan cek log Jenkins untuk detail.');
+                }
+                return;
+            }
+            if (firstAttemptFiles.length === 0) {
                 logger.warn('No changes on first attempt — retrying with stricter prompt...');
                 try {
                     await runProviderCLI(opts.provider, buildIssueFixRetryPrompt(issueData.title, issueData.body ?? '', REPO_DIR));
@@ -307,7 +324,14 @@ async function main() {
 
             // Check for changes and commit
             const changedFiles = getChangedFiles();
-            if (!changedFiles || changedFiles.length === 0) {
+            if (changedFiles === null) {
+                logger.error('getChangedFiles() failed (git error) before commit — aborting.');
+                if (!dryRun) {
+                    await gh.postComment(opts.repo, opts.pr, '⚠️ **Auto-Fix Gagal**\n\nGagal membaca status git sebelum commit. Silakan cek log Jenkins untuk detail.');
+                }
+                return;
+            }
+            if (changedFiles.length === 0) {
                 if (dryRun) {
                     logger.info(`[DRY-RUN] Would post no-changes comment to ${opts.repo}#${opts.pr}`);
                 } else {
