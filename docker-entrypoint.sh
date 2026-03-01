@@ -18,4 +18,4 @@ if [ -f /run/secrets/gemini-settings ]; then
     cp /run/secrets/gemini-settings /home/user/.gemini/settings.json 2>/dev/null || true
 fi
 
-exec node /app/src/index.js "$@"
+exec "$@"
