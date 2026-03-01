@@ -99,7 +99,11 @@ pipeline {
                     // docker run -v uses host paths, so we must map it to the real host path via
                     // the volume's Source mount point.
                     def jenkinsHomeSrc = sh(
-                        script: "docker inspect \${HOSTNAME} --format '{{range .Mounts}}{{if eq .Destination \"/var/jenkins_home\"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || echo ''",
+                        script: """
+                            REAL_ID=\$(cat /proc/1/cgroup 2>/dev/null | grep -oP '(?<=docker[-/])[a-f0-9]{64}' | head -1 || echo '')
+                            INSPECT_TARGET=\${REAL_ID:-\${HOSTNAME}}
+                            docker inspect \$INSPECT_TARGET --format '{{range .Mounts}}{{if eq .Destination "/var/jenkins_home"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || echo ''
+                        """,
                         returnStdout: true
                     ).trim()
                     if (jenkinsHomeSrc) {
