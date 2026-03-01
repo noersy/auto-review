@@ -42,7 +42,6 @@ export async function runProviderCLI(provider, promptText) {
 
         let stdoutBuf = '';
         let finalResult = null;
-        let accumulatedText = '';  // Accumulate text from streaming chunks
 
         proc.stdout.on('data', chunk => {
             const raw = chunk.toString();
@@ -55,7 +54,7 @@ export async function runProviderCLI(provider, promptText) {
                     const event = JSON.parse(line);
 
                     if (provider === 'gemini') {
-                        /* 
+                        /*
                          * Gemini stream-json format:
                          * Text chunks come in as: {"type":"message","role":"assistant","content":"...","delta":true}
                          * The "result" event only contains stats.
@@ -71,11 +70,13 @@ export async function runProviderCLI(provider, promptText) {
                          * Claude stream-json format (--output-format stream-json --verbose):
                          * - assistant: {"type":"assistant","message":{"content":[{"type":"text","text":"..."}|{"type":"tool_use","name":"..."}]}}
                          * - result:    {"type":"result","subtype":"success","result":"..."}
+                         * Text is accumulated directly into finalResult from assistant events;
+                         * the result event's field is used only if no text was streamed.
                          */
                         if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
                             for (const block of event.message.content) {
                                 if (block.type === 'text' && block.text) {
-                                    accumulatedText += block.text;
+                                    finalResult = (finalResult || '') + block.text;
                                     if (block.text.trim()) {
                                         process.stderr.write(`[Claude] ${block.text}`);
                                     }
@@ -83,8 +84,8 @@ export async function runProviderCLI(provider, promptText) {
                                     logger.info(`[Claude] tool: ${block.name} (${JSON.stringify(block.input).slice(0, 120)})`);
                                 }
                             }
-                        } else if (event.type === 'result') {
-                            finalResult = event.result || accumulatedText || null;
+                        } else if (event.type === 'result' && !finalResult) {
+                            finalResult = event.result || null;
                         }
                     }
                 } catch (_) { /* ignore non-JSON lines */ }
@@ -103,10 +104,6 @@ export async function runProviderCLI(provider, promptText) {
             if (code !== 0) {
                 reject(new Error(`${provider.toUpperCase()} CLI exited with code ${code} `));
                 return;
-            }
-            // For Claude: fall back to accumulated stream text if no 'result' event was captured
-            if (!finalResult && accumulatedText) {
-                finalResult = accumulatedText;
             }
             if (!finalResult) {
                 const stderrTail = stderrBuf.split('\n').filter(l => l.trim()).slice(-20).join('\n');

@@ -93,7 +93,7 @@ async function main() {
 
     try {
         const isNewPR = ['opened', 'synchronize', 'reopened'].includes(opts.action);
-        const commentBody = (opts.commentBody === 'null' || !opts.commentBody) ? '' : opts.commentBody;
+        const commentBody = opts.commentBody || '';
         const isReply = opts.action === 'created' && commentBody.includes(config.BOT_MENTION);
 
         // ===================================
@@ -111,6 +111,12 @@ async function main() {
         if (isReply) {
             if (opts.sender === config.BOT_USERNAME) {
                 logger.info('Comment is from the bot itself — ignoring loop');
+                return;
+            }
+
+            const lastReplyTime = await gh.getLastBotReplyTime(opts.repo, opts.pr);
+            if (Date.now() - lastReplyTime < config.REPLY_COOLDOWN_MS) {
+                logger.info(`Reply cooldown active — ignoring comment on ${opts.repo}#${opts.pr}`);
                 return;
             }
 
