@@ -210,7 +210,8 @@ async function main() {
 
             let validationResult;
             try {
-                const jsonStrMatch = validationResultRaw.match(/\{[\s\S]*\}/);
+                // Use non-greedy match to avoid capturing past the first complete JSON object
+                const jsonStrMatch = validationResultRaw.match(/\{[\s\S]*?\}/);
                 const jsonStr = jsonStrMatch ? jsonStrMatch[0] : validationResultRaw;
                 validationResult = JSON.parse(jsonStr);
             } catch (err) {

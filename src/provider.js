@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import { logger } from './logger.js';
+import config from './config.js';
 
 const CLI_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -19,7 +20,7 @@ export async function runProviderCLI(provider, promptText) {
         '-y',
         '-o', 'stream-json',
         '--include-directories', repoDir,
-        '--model', 'gemini-2.5-pro'
+        '--model', config.GEMINI_MODEL
     ];
 
     if (provider !== 'claude' && provider !== 'gemini') {
@@ -103,7 +104,7 @@ export async function runProviderCLI(provider, promptText) {
         proc.on('close', code => {
             clearTimeout(timeout);
             if (code !== 0) {
-                reject(new Error(`${provider.toUpperCase()} CLI exited with code ${code} `));
+                reject(new Error(`${provider.toUpperCase()} CLI exited with code ${code}`));
                 return;
             }
             if (!finalResult) {

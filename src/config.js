@@ -9,5 +9,8 @@ export default {
 
     // Labels
     AUTO_FIX_LABEL: 'auto-fix',
-    AUTO_REVIEW_LABEL: 'auto-review'
+    AUTO_REVIEW_LABEL: 'auto-review',
+
+    // LLM Models
+    GEMINI_MODEL: 'gemini-2.5-pro',
 };
