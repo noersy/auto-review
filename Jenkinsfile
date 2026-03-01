@@ -269,15 +269,18 @@ pipeline {
                 // Update only if content is non-empty
                 if (updatedClaude && updatedGemini) {
                     dir('agent-credentials') {
+                        sh """
+                            git config user.email "jenkins@auto-review-bot"
+                            git config user.name "Jenkins Auto-Review Bot"
+                            git remote set-url origin "https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/agent-credentials.git"
+                            git fetch origin
+                            git checkout -B main origin/main
+                        """
                         if (updatedClaude)   writeFile file: 'claude.json',          text: updatedClaude
                         if (updatedGemini)   writeFile file: 'gemini-oauth.json',    text: updatedGemini
                         if (updatedSettings) writeFile file: 'gemini-settings.json', text: updatedSettings
 
                         sh """
-                            git config user.email "jenkins@auto-review-bot"
-                            git config user.name "Jenkins Auto-Review Bot"
-                            git remote set-url origin "https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/agent-credentials.git"
-                            git checkout -B main origin/main
                             git add claude.json gemini-oauth.json gemini-settings.json
                             if ! git diff --cached --quiet; then
                                 git commit -m "chore: refresh credentials after successful job build #${env.BUILD_NUMBER}"
