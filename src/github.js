@@ -16,7 +16,16 @@ async function withRetry(fn, label, retries = 3, delayMs = 2000) {
                     const retryAfter = err.response?.headers?.['retry-after'];
                     if (retryAfter) {
                         const parsed = parseInt(retryAfter, 10);
-                        waitMs = isNaN(parsed) ? delayMs * attempt : parsed * 1000;
+                        if (!isNaN(parsed)) {
+                            // Retry-After as seconds
+                            waitMs = parsed * 1000;
+                        } else {
+                            // Retry-After as HTTP-date string
+                            const retryDate = new Date(retryAfter).getTime();
+                            if (!isNaN(retryDate)) {
+                                waitMs = Math.max(retryDate - Date.now(), delayMs * attempt);
+                            }
+                        }
                     }
                 }
                 logger.warn(`${label} failed with ${status} — retrying in ${waitMs}ms (${attempt}/${retries})...`);
@@ -48,6 +57,24 @@ export class GitHubClient {
             `GET PR #${prNumber}`
         );
         return data;
+    }
+
+    // Get parent issue of a sub-issue. Returns parent issue data or null if no parent.
+    // Uses the dedicated REST endpoint: GET /repos/{owner}/{repo}/issues/{issue_number}/parent
+    async getParentIssue(repoFullName, issueNumber) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        try {
+            const { data } = await withRetry(
+                () => this.octokit.request('GET /repos/{owner}/{repo}/issues/{issue_number}/parent', {
+                    owner, repo, issue_number: issueNumber
+                }),
+                `GET parent issue of #${issueNumber}`
+            );
+            return data;
+        } catch (err) {
+            if (err.status === 404) return null;
+            throw err;
+        }
     }
 
     // Get Issue metadata (title, body)

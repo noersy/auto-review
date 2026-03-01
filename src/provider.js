@@ -103,6 +103,27 @@ export async function runProviderCLI(provider, promptText) {
 
         proc.on('close', code => {
             clearTimeout(timeout);
+            // Process any remaining buffered content that lacked a trailing newline
+            if (stdoutBuf.trim()) {
+                try {
+                    const event = JSON.parse(stdoutBuf);
+                    if (provider === 'gemini') {
+                        if (event.type === 'message' && event.role === 'assistant' && event.content) {
+                            finalResult = (finalResult || '') + event.content;
+                        }
+                    } else {
+                        if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+                            for (const block of event.message.content) {
+                                if (block.type === 'text' && block.text) {
+                                    finalResult = (finalResult || '') + block.text;
+                                }
+                            }
+                        } else if (event.type === 'result' && !finalResult) {
+                            finalResult = event.result || null;
+                        }
+                    }
+                } catch (_) { /* ignore non-JSON remainder */ }
+            }
             if (code !== 0) {
                 reject(new Error(`${provider.toUpperCase()} CLI exited with code ${code}`));
                 return;

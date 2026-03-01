@@ -157,8 +157,8 @@ async function main() {
         // FLOW B: Reply to Developer Comment
         // ===================================
         if (isReply) {
-            if (opts.sender === config.BOT_USERNAME) {
-                logger.info('Comment is from the bot itself — ignoring loop');
+            if (!opts.sender || opts.sender === config.BOT_USERNAME) {
+                logger.info('Comment is from the bot itself (or sender unknown) — ignoring loop');
                 return;
             }
 
@@ -241,11 +241,11 @@ async function main() {
             // 3. Proceed with Auto Fix
             const prompt = buildIssueFixPrompt(issueData.title, issueData.body ?? '', REPO_DIR);
 
-            // Resolve base branch early — sub-issue branches off parent fix branch
+            // Resolve base branch — sub-issue branches off parent fix branch if one exists
             let baseBranch;
-            if (issueData.parent_issue_url) {
-                const parentNumber = issueData.parent_issue_url.split('/').pop();
-                const parentBranch = `auto-fix/issue-${parentNumber}`;
+            const parentIssue = await gh.getParentIssue(opts.repo, opts.pr);
+            if (parentIssue) {
+                const parentBranch = `auto-fix/issue-${parentIssue.number}`;
                 const parentExists = await gh.branchExists(opts.repo, parentBranch);
                 if (parentExists) {
                     baseBranch = parentBranch;
