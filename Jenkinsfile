@@ -167,8 +167,10 @@ pipeline {
                     def useVolumeMount = env.DOCKER_USE_VOLUME_MOUNT == 'true'
 
                     withEnv(["PROVIDER=${env.GH_PROVIDER}"]) {
-                        // Write comment body to a file to avoid shell injection via special chars
+                        // Write comment body to a file to avoid shell injection via special chars.
+                        // Remove first in case a previous failed run left a directory with this name.
                         def commentBodyFile = "${env.WORKSPACE}/.bot-comment-body.txt"
+                        sh "rm -rf '${commentBodyFile}'"
                         writeFile file: commentBodyFile, text: env.GH_COMMENT_BODY ?: ''
 
                         // Always start fresh; wait for any in-progress removal to finish
