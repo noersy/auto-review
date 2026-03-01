@@ -21,6 +21,9 @@ export async function runProviderCLI(provider, promptText) {
         '--model', 'gemini-2.5-pro'
     ];
 
+    if (provider !== 'claude' && provider !== 'gemini') {
+        throw new Error(`Unknown provider "${provider}". Expected "claude" or "gemini".`);
+    }
     const providerArgs = provider === 'gemini' ? geminiArgs : claudeArgs;
 
     return new Promise((resolve, reject) => {
