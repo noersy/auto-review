@@ -268,28 +268,29 @@ pipeline {
 
                 // Update only if content is non-empty
                 if (updatedClaude && updatedGemini) {
-                    def credDir = "${env.WORKSPACE}/agent-credentials"
-                    sh """
-                        git -C "${credDir}" config user.email "jenkins@auto-review-bot"
-                        git -C "${credDir}" config user.name "Jenkins Auto-Review Bot"
-                        git -C "${credDir}" remote set-url origin "https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/agent-credentials.git"
-                        git -C "${credDir}" fetch origin
-                        git -C "${credDir}" checkout -B main origin/main
-                    """
-                    // Write files using Groovy File API (supports absolute paths)
-                    new File("${credDir}/claude.json").text          = updatedClaude
-                    new File("${credDir}/gemini-oauth.json").text    = updatedGemini
-                    if (updatedSettings) new File("${credDir}/gemini-settings.json").text = updatedSettings
+                    def credDir = "${env.WORKSPACE}/agent-credentials-update"
+                    // Escape single quotes in JSON for shell heredoc
+                    def claudeEscaped   = updatedClaude.replace("'", "'\\''")
+                    def geminiEscaped   = updatedGemini.replace("'", "'\\''")
+                    def settingsEscaped = updatedSettings ? updatedSettings.replace("'", "'\\''") : ''
 
                     sh """
-                        git -C "${credDir}" add claude.json gemini-oauth.json gemini-settings.json
-                        if ! git -C "${credDir}" diff --cached --quiet; then
-                            git -C "${credDir}" commit -m "chore: refresh credentials after successful job build #${env.BUILD_NUMBER}"
-                            git -C "${credDir}" push origin main
-                            echo "[CRED] Credentials updated in agent-credentials repo."
+                        rm -rf '${credDir}'
+                        git clone 'https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/agent-credentials.git' '${credDir}'
+                        printf '%s' '${claudeEscaped}'   > '${credDir}/claude.json'
+                        printf '%s' '${geminiEscaped}'   > '${credDir}/gemini-oauth.json'
+                        printf '%s' '${settingsEscaped}' > '${credDir}/gemini-settings.json'
+                        git -C '${credDir}' config user.email 'jenkins@auto-review-bot'
+                        git -C '${credDir}' config user.name 'Jenkins Auto-Review Bot'
+                        git -C '${credDir}' add claude.json gemini-oauth.json gemini-settings.json
+                        if ! git -C '${credDir}' diff --cached --quiet; then
+                            git -C '${credDir}' commit -m 'chore: refresh credentials after successful job build #${env.BUILD_NUMBER}'
+                            git -C '${credDir}' push origin main
+                            echo '[CRED] Credentials updated in agent-credentials repo.'
                         else
-                            echo "[CRED] No credential changes detected, skipping push."
+                            echo '[CRED] No credential changes detected, skipping push.'
                         fi
+                        rm -rf '${credDir}'
                     """
                 }
             }
