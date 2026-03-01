@@ -219,10 +219,18 @@ pipeline {
                         """
 
                         if (useVolumeMount) {
-                            // Comment body: copy via docker exec (not bind mount) to avoid
-                            // individual-file mount ownership issues on overlayfs.
-                            // .bot-comment-body.txt is already in /repo (workspace mounted as /repo).
-                            sh "docker exec --user root ${containerName} bash -c 'cp /repo/.bot-comment-body.txt /home/botuser/.bot-comment-body.txt && chown botuser:botuser /home/botuser/.bot-comment-body.txt'"
+                            // Comment body: write directly into .creds/ dir (which is NOT mounted
+                            // into the container) then copy via docker exec from /repo path.
+                            // Verify the file exists on host before attempting copy.
+                            sh """
+                                echo "[DEBUG] commentBodyFile=${commentBodyFile}"
+                                ls -la '${commentBodyFile}' || echo "[DEBUG] FILE NOT FOUND on host"
+                                docker exec --user root ${containerName} bash -c '
+                                    ls -la /repo/.bot-comment-body.txt || echo "[DEBUG] FILE NOT FOUND in /repo"
+                                    cp /repo/.bot-comment-body.txt /home/botuser/.bot-comment-body.txt
+                                    chown botuser:botuser /home/botuser/.bot-comment-body.txt
+                                '
+                            """
                         } else {
                             // Native Docker: inject credentials and comment body via docker cp
                             sh """
