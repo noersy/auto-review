@@ -248,22 +248,29 @@ pipeline {
                         """
 
                         // Read back potentially refreshed credentials before container is removed
-                        def updatedClaude   = sh(script: "docker exec ${containerName} cat /home/botuser/.claude/.credentials.json 2>/dev/null || echo ''", returnStdout: true).trim()
-                        def updatedGemini   = sh(script: "docker exec ${containerName} cat /home/botuser/.gemini/oauth_creds.json 2>/dev/null || echo ''", returnStdout: true).trim()
-                        def updatedSettings = sh(script: "docker exec ${containerName} cat /home/botuser/.gemini/settings.json 2>/dev/null || echo ''", returnStdout: true).trim()
+                        def tmpClaude   = "${env.WORKSPACE}/.updated-claude.json"
+                        def tmpGemini   = "${env.WORKSPACE}/.updated-gemini.json"
+                        def tmpSettings = "${env.WORKSPACE}/.updated-settings.json"
+
+                        sh "docker cp ${containerName}:/home/botuser/.claude/.credentials.json ${tmpClaude} 2>/dev/null || true"
+                        sh "docker cp ${containerName}:/home/botuser/.gemini/oauth_creds.json  ${tmpGemini} 2>/dev/null || true"
+                        sh "docker cp ${containerName}:/home/botuser/.gemini/settings.json     ${tmpSettings} 2>/dev/null || true"
+
+                        def updatedClaude   = fileExists(tmpClaude)   ? readFile(tmpClaude).trim()   : ''
+                        def updatedGemini   = fileExists(tmpGemini)   ? readFile(tmpGemini).trim()   : ''
+                        def updatedSettings = fileExists(tmpSettings) ? readFile(tmpSettings).trim() : ''
 
                         if (updatedClaude && updatedGemini) {
-                            def credDir         = "${env.WORKSPACE}/agent-credentials-update"
-                            def claudeEscaped   = updatedClaude.replace("'", "'\\''")
-                            def geminiEscaped   = updatedGemini.replace("'", "'\\''")
-                            def settingsEscaped = updatedSettings ? updatedSettings.replace("'", "'\\''") : ''
+                            def credDir = "${env.WORKSPACE}/agent-credentials-update"
 
                             sh """
                                 rm -rf '${credDir}'
                                 git clone 'https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/agent-credentials.git' '${credDir}'
-                                printf '%s' '${claudeEscaped}'   > '${credDir}/claude.json'
-                                printf '%s' '${geminiEscaped}'   > '${credDir}/gemini-oauth.json'
-                                printf '%s' '${settingsEscaped}' > '${credDir}/gemini-settings.json'
+                            """
+                            writeFile file: "${credDir}/claude.json",         text: updatedClaude
+                            writeFile file: "${credDir}/gemini-oauth.json",   text: updatedGemini
+                            writeFile file: "${credDir}/gemini-settings.json", text: updatedSettings ?: ''
+                            sh """
                                 git -C '${credDir}' config user.email 'jenkins@auto-review-bot'
                                 git -C '${credDir}' config user.name 'Jenkins Auto-Review Bot'
                                 git -C '${credDir}' add claude.json gemini-oauth.json gemini-settings.json
@@ -287,7 +294,7 @@ pipeline {
         always {
             sh "docker rm -f auto-review-bot-ci 2>/dev/null || true"
             sh "rm -rf ${env.WORKSPACE}/agent-credentials 2>/dev/null || true"
-            sh "rm -f ${env.WORKSPACE}/.claude-credentials.json ${env.WORKSPACE}/.gemini-credentials.json ${env.WORKSPACE}/.gemini-settings.json ${env.WORKSPACE}/.bot-comment-body.txt 2>/dev/null || true"
+            sh "rm -f ${env.WORKSPACE}/.claude-credentials.json ${env.WORKSPACE}/.gemini-credentials.json ${env.WORKSPACE}/.gemini-settings.json ${env.WORKSPACE}/.bot-comment-body.txt ${env.WORKSPACE}/.updated-claude.json ${env.WORKSPACE}/.updated-gemini.json ${env.WORKSPACE}/.updated-settings.json 2>/dev/null || true"
         }
         failure {
             echo 'Bot execution FAILED.'

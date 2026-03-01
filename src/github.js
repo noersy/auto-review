@@ -56,11 +56,13 @@ export class GitHubClient {
     // Find the bot's existing review comment on a PR, returns comment data or null
     async findBotReviewComment(repoFullName, issueNumber) {
         const { owner, repo } = this._parseRepo(repoFullName);
-        const { data } = await withRetry(
-            () => this.octokit.issues.listComments({ owner, repo, issue_number: issueNumber }),
+        const comments = await withRetry(
+            () => this.octokit.paginate(this.octokit.issues.listComments, {
+                owner, repo, issue_number: issueNumber, per_page: 100
+            }),
             `LIST comments #${issueNumber}`
         );
-        return data.find(c => c.user.login === config.BOT_USERNAME && c.body.startsWith('## 🤖')) ?? null;
+        return comments.find(c => c.user.login === config.BOT_USERNAME && c.body.startsWith('## 🤖')) ?? null;
     }
 
     // Update an existing comment by ID
@@ -87,11 +89,13 @@ export class GitHubClient {
     async getCommentThread(repoFullName, issueNumber) {
         const { owner, repo } = this._parseRepo(repoFullName);
         logger.info(`Fetching comments for ${repoFullName}#${issueNumber}...`);
-        const { data } = await withRetry(
-            () => this.octokit.issues.listComments({ owner, repo, issue_number: issueNumber }),
+        const comments = await withRetry(
+            () => this.octokit.paginate(this.octokit.issues.listComments, {
+                owner, repo, issue_number: issueNumber, per_page: 100
+            }),
             `GET comments #${issueNumber}`
         );
-        return data.map(c => `[${c.user.login}]: ${c.body}`).join('\n\n');
+        return comments.map(c => `[${c.user.login}]: ${c.body}`).join('\n\n');
     }
 
     // Get default branch of a repo
