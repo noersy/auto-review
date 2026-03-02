@@ -4,6 +4,8 @@ import { execSync } from 'child_process';
 import { GitHubClient } from './github.js';
 import { logger } from './logger.js';
 import { flowReview, flowReply, flowAutoFix } from './flows.js';
+import { buildWebhookPayload, triggerJenkinsJob, logTriggerResult } from './jenkins.js';
+import config from './config.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -133,9 +135,102 @@ program
         });
     });
 
+// ── Subcommand: trigger ─────────────────────────────────────────────────────
+
+const trigger = program
+    .command('trigger')
+    .description('Trigger Jenkins job secara remote via webhook');
+
+function resolveJenkinsUrl(flagUrl) {
+    const url = flagUrl || process.env.JENKINS_URL;
+    if (!url || !url.trim()) {
+        console.error('Error: Jenkins URL tidak ditemukan.');
+        console.error('  Gunakan --jenkins-url <url>, atau set JENKINS_URL env var.');
+        process.exit(1);
+    }
+    return url;
+}
+
+trigger
+    .command('review <pr>')
+    .description('Trigger Jenkins untuk review Pull Request')
+    .option('--jenkins-url <url>', 'Jenkins base URL (default: $JENKINS_URL)')
+    .option('--webhook-token <token>', 'Override webhook token')
+    .option('--jenkins-user <user>', 'Jenkins username (default: $JENKINS_USER)')
+    .option('--jenkins-token <token>', 'Jenkins API token (default: $JENKINS_API_TOKEN)')
+    .action(async (pr, cmdOpts) => {
+        const globalOpts = program.opts();
+        const repo = resolveRepo(globalOpts.repo);
+        const provider = globalOpts.provider;
+        const dryRun = globalOpts.dryRun;
+        const jenkinsUrl = resolveJenkinsUrl(cmdOpts.jenkinsUrl);
+        const webhookToken = cmdOpts.webhookToken || config.WEBHOOK_TOKEN;
+
+        const payload = buildWebhookPayload('review', repo, pr, provider);
+
+        if (dryRun) {
+            logger.info('DRY-RUN: Payload yang akan dikirim ke Jenkins:');
+            console.log(JSON.stringify(payload, null, 2));
+            logger.info(`URL: ${jenkinsUrl}/generic-webhook-trigger/invoke?token=${webhookToken}`);
+            return;
+        }
+
+        const auth = {
+            user: cmdOpts.jenkinsUser || process.env.JENKINS_USER,
+            apiToken: cmdOpts.jenkinsToken || process.env.JENKINS_API_TOKEN,
+        };
+
+        try {
+            const result = await triggerJenkinsJob(jenkinsUrl, webhookToken, payload, auth);
+            logTriggerResult(result);
+        } catch (err) {
+            logger.error(err.message);
+            process.exit(1);
+        }
+    });
+
+trigger
+    .command('fix <issue>')
+    .description('Trigger Jenkins untuk auto-fix issue')
+    .option('--jenkins-url <url>', 'Jenkins base URL (default: $JENKINS_URL)')
+    .option('--webhook-token <token>', 'Override webhook token')
+    .option('--jenkins-user <user>', 'Jenkins username (default: $JENKINS_USER)')
+    .option('--jenkins-token <token>', 'Jenkins API token (default: $JENKINS_API_TOKEN)')
+    .action(async (issue, cmdOpts) => {
+        const globalOpts = program.opts();
+        const repo = resolveRepo(globalOpts.repo);
+        const provider = globalOpts.provider;
+        const dryRun = globalOpts.dryRun;
+        const jenkinsUrl = resolveJenkinsUrl(cmdOpts.jenkinsUrl);
+        const webhookToken = cmdOpts.webhookToken || config.WEBHOOK_TOKEN;
+
+        const payload = buildWebhookPayload('fix', repo, issue, provider);
+
+        if (dryRun) {
+            logger.info('DRY-RUN: Payload yang akan dikirim ke Jenkins:');
+            console.log(JSON.stringify(payload, null, 2));
+            logger.info(`URL: ${jenkinsUrl}/generic-webhook-trigger/invoke?token=${webhookToken}`);
+            return;
+        }
+
+        const auth = {
+            user: cmdOpts.jenkinsUser || process.env.JENKINS_USER,
+            apiToken: cmdOpts.jenkinsToken || process.env.JENKINS_API_TOKEN,
+        };
+
+        try {
+            const result = await triggerJenkinsJob(jenkinsUrl, webhookToken, payload, auth);
+            logTriggerResult(result);
+        } catch (err) {
+            logger.error(err.message);
+            process.exit(1);
+        }
+    });
+
 // ── Parse & Run ─────────────────────────────────────────────────────────────
 
 program.parseAsync().catch((err) => {
     logger.error(`Fatal error: ${err.stack || err.message}`);
     process.exit(1);
 });
+

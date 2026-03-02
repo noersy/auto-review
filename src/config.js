@@ -11,6 +11,9 @@ export default {
     AUTO_FIX_LABEL: 'auto-fix',
     AUTO_REVIEW_LABEL: 'auto-review',
 
+    // Jenkins
+    WEBHOOK_TOKEN: 'headless-agent-webhook',
+
     // LLM Models
     GEMINI_MODEL: 'gemini-3.1-pro-preview',
     // GEMINI_MODEL: 'gemini-2.5-pro',
