@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import { logger } from './logger.js';
 import config from './config.js';
 
-const CLI_TIMEOUT_MS = 30 * 60 * 1000; // 10 minutes
+const CLI_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 export async function runProviderCLI(provider, promptText) {
     logger.info(`Executing ${provider.toUpperCase()} CLI...`);
@@ -130,8 +130,12 @@ export async function runProviderCLI(provider, promptText) {
                 } catch (_) { /* ignore non-JSON remainder */ }
             }
             if (code !== 0) {
-                reject(new Error(`${provider.toUpperCase()} CLI exited with code ${code}`));
-                return;
+                if (finalResult) {
+                    logger.info(`${provider.toUpperCase()} CLI exited with code ${code}, but review content was already received. Proceeding with partial result.`);
+                } else {
+                    reject(new Error(`${provider.toUpperCase()} CLI exited with code ${code}`));
+                    return;
+                }
             }
             if (!finalResult) {
                 const stderrTail = stderrBuf.split('\n').filter(l => l.trim()).slice(-20).join('\n');
