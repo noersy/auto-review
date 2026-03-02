@@ -12,5 +12,6 @@ export default {
     AUTO_REVIEW_LABEL: 'auto-review',
 
     // LLM Models
-    GEMINI_MODEL: 'gemini-2.5-pro',
+    GEMINI_MODEL: 'gemini-3.1-pro-preview',
+    // GEMINI_MODEL: 'gemini-2.5-pro',
 };
