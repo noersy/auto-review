@@ -13,9 +13,17 @@ export async function flowReview(gh, repo, prNumber, provider, dryRun) {
         if (dryRun) {
             logger.info(`[DRY-RUN] Would post massive-PR warning to ${repo}#${prNumber}`);
         } else {
-            await gh.postComment(repo, prNumber,
-                `⚠️ **Auto-Review Dibatalkan**\n\nPR ini mengubah total ${prData.additions + prData.deletions} baris kode (batas maksimum ${config.MASSIVE_PR_LINES}). Terlalu masif untuk di-review secara otomatis saat ini.\nSilakan review secara manual atau pecah PR menjadi bagian yang lebih kecil.`
-            );
+            await gh.postComment(repo, prNumber, [
+                `## ⚠️ Auto-Review — Dibatalkan`,
+                ``,
+                `PR ini mengubah total **${prData.additions + prData.deletions} baris** kode, melebihi batas maksimum **${config.MASSIVE_PR_LINES} baris**.`,
+                ``,
+                `---`,
+                ``,
+                `### Langkah Selanjutnya`,
+                `- Pecah PR ini menjadi beberapa bagian yang lebih kecil, atau`,
+                `- Lakukan review secara manual`,
+            ].join('\n'));
         }
         logger.warn('Massive PR detected — aborted review.');
         return;
@@ -40,8 +48,29 @@ export async function flowReview(gh, repo, prNumber, provider, dryRun) {
     } catch (err) {
         const isTimeout = err.message?.includes('timed out');
         const errBody = isTimeout
-            ? `⚠️ **Auto-Review Timeout**\n\nLLM CLI tidak merespons dalam 10 menit. Silakan coba lagi dengan menambahkan label \`auto-review\`.`
-            : `⚠️ **Auto-Review Gagal**\n\nTerjadi error: ${err.message}`;
+            ? [
+                `## ⏱️ Auto-Review — Timeout`,
+                ``,
+                `LLM tidak merespons dalam batas waktu **10 menit**.`,
+                ``,
+                `---`,
+                ``,
+                `### Langkah Selanjutnya`,
+                `- Tambahkan kembali label \`auto-review\` untuk mencoba ulang`,
+            ].join('\n')
+            : [
+                `## ❌ Auto-Review — Gagal`,
+                ``,
+                `Terjadi error saat menjalankan review otomatis.`,
+                ``,
+                `> \`${err.message}\``,
+                ``,
+                `---`,
+                ``,
+                `### Langkah Selanjutnya`,
+                `- Periksa log Jenkins untuk detail lebih lanjut`,
+                `- Tambahkan kembali label \`auto-review\` untuk mencoba ulang`,
+            ].join('\n');
         if (dryRun) {
             logger.info(`[DRY-RUN] Would post error comment to ${repo}#${prNumber}`);
         } else {
@@ -60,7 +89,7 @@ export async function flowReview(gh, repo, prNumber, provider, dryRun) {
         }
     }
 
-    const reviewBody = `<!-- auto-review-bot -->\n## 🤖 ${provider.toUpperCase()} Auto Review\n\n${reviewText}`;
+    const reviewBody = `<!-- auto-review-bot -->\n## 🤖 Auto-Review — ${provider.toUpperCase()}\n\n${reviewText}`;
     if (existingReview) {
         if (dryRun) {
             logger.info(`[DRY-RUN] Would update existing review comment ${existingReview.id} on ${repo}#${prNumber}`);
@@ -103,8 +132,18 @@ export async function flowReply(gh, { repo, pr, provider, sender, commentBody, d
     } catch (err) {
         const isTimeout = err.message?.includes('timed out');
         const errBody = isTimeout
-            ? `⚠️ **Reply Timeout**\n\nLLM CLI tidak merespons dalam 10 menit.`
-            : `⚠️ **Reply Gagal**\n\nError: ${err.message}`;
+            ? [
+                `## ⏱️ Reply — Timeout`,
+                ``,
+                `LLM tidak merespons dalam batas waktu **10 menit**.`,
+            ].join('\n')
+            : [
+                `## ❌ Reply — Gagal`,
+                ``,
+                `Terjadi error saat memproses reply.`,
+                ``,
+                `> \`${err.message}\``,
+            ].join('\n');
         if (dryRun) {
             logger.info(`[DRY-RUN] Would post reply error comment to ${repo}#${pr}`);
         } else {
@@ -155,7 +194,21 @@ export async function flowAutoFix(gh, { repo, pr, provider, dryRun }) {
             ? validationResult.reason.trim()
             : 'Tidak ada alasan yang diberikan oleh validator.';
         logger.info(`Issue #${pr} validation failed: ${reason}`);
-        const rejectionMsg = `⚠️ **Auto-Fix Dibatalkan**\n\nIssue ini tidak memiliki konteks yang cukup untuk diperbaiki secara otomatis oleh bot.\n\n**Alasan:** ${reason}\n\nSilakan lengkapi deskripsi issue (misalnya dengan menambahkan logs, pesan error, langkah reproduksi, atau letak file yang bermasalah) lalu tambahkan kembali label \`auto-fix\`.`;
+        const rejectionMsg = [
+            `## ⚠️ Auto-Fix — Dibatalkan`,
+            ``,
+            `Issue ini tidak memiliki konteks yang cukup untuk diperbaiki secara otomatis.`,
+            ``,
+            `> **Alasan:** ${reason}`,
+            ``,
+            `---`,
+            ``,
+            `### Langkah Selanjutnya`,
+            `Lengkapi deskripsi issue dengan informasi berikut, lalu tambahkan kembali label \`auto-fix\`:`,
+            `- Log atau pesan error`,
+            `- Langkah reproduksi`,
+            `- Letak file yang bermasalah`,
+        ].join('\n');
         if (dryRun) {
             logger.info(`[DRY-RUN] Would post validation rejection to ${repo}#${pr}`);
         } else {
@@ -196,7 +249,16 @@ export async function flowAutoFix(gh, { repo, pr, provider, dryRun }) {
     if (!setupBranch(branchName, baseBranch, repo, process.env.GITHUB_TOKEN)) {
         logger.error('setupBranch failed — aborting auto-fix.');
         if (!dryRun) {
-            await gh.postComment(repo, pr, '⚠️ **Auto-Fix Gagal**\n\nGagal menyiapkan branch Git. Silakan cek log Jenkins untuk detail.');
+            await gh.postComment(repo, pr, [
+                `## ❌ Auto-Fix — Gagal`,
+                ``,
+                `Gagal menyiapkan branch Git.`,
+                ``,
+                `---`,
+                ``,
+                `### Langkah Selanjutnya`,
+                `- Periksa log Jenkins untuk detail lebih lanjut`,
+            ].join('\n'));
         }
         return;
     }
@@ -209,7 +271,19 @@ export async function flowAutoFix(gh, { repo, pr, provider, dryRun }) {
         if (dryRun) {
             logger.info(`[DRY-RUN] Would post LLM error comment to ${repo}#${pr}`);
         } else {
-            await gh.postComment(repo, pr, `⚠️ **Auto-Fix Gagal**\n\nTerjadi error saat menjalankan LLM: ${err.message}\n\nSilakan cek log Jenkins untuk detail.`);
+            await gh.postComment(repo, pr, [
+                `## ❌ Auto-Fix — Gagal`,
+                ``,
+                `Terjadi error saat menjalankan LLM.`,
+                ``,
+                `> \`${err.message}\``,
+                ``,
+                `---`,
+                ``,
+                `### Langkah Selanjutnya`,
+                `- Periksa log Jenkins untuk detail lebih lanjut`,
+                `- Tambahkan kembali label \`auto-fix\` untuk mencoba ulang`,
+            ].join('\n'));
         }
         return;
     }
@@ -219,7 +293,16 @@ export async function flowAutoFix(gh, { repo, pr, provider, dryRun }) {
     if (firstAttemptFiles === null) {
         logger.error('getChangedFiles() failed (git error) after first attempt — aborting.');
         if (!dryRun) {
-            await gh.postComment(repo, pr, '⚠️ **Auto-Fix Gagal**\n\nGagal membaca status git setelah LLM selesai. Silakan cek log Jenkins untuk detail.');
+            await gh.postComment(repo, pr, [
+                `## ❌ Auto-Fix — Gagal`,
+                ``,
+                `Gagal membaca status Git setelah LLM selesai.`,
+                ``,
+                `---`,
+                ``,
+                `### Langkah Selanjutnya`,
+                `- Periksa log Jenkins untuk detail lebih lanjut`,
+            ].join('\n'));
         }
         return;
     }
@@ -232,7 +315,19 @@ export async function flowAutoFix(gh, { repo, pr, provider, dryRun }) {
             if (dryRun) {
                 logger.info(`[DRY-RUN] Would post retry error comment to ${repo}#${pr}`);
             } else {
-                await gh.postComment(repo, pr, `⚠️ **Auto-Fix Gagal**\n\nTerjadi error saat retry LLM: ${err.message}\n\nSilakan cek log Jenkins untuk detail.`);
+                await gh.postComment(repo, pr, [
+                    `## ❌ Auto-Fix — Gagal`,
+                    ``,
+                    `Terjadi error saat retry LLM.`,
+                    ``,
+                    `> \`${err.message}\``,
+                    ``,
+                    `---`,
+                    ``,
+                    `### Langkah Selanjutnya`,
+                    `- Periksa log Jenkins untuk detail lebih lanjut`,
+                    `- Tambahkan kembali label \`auto-fix\` untuk mencoba ulang`,
+                ].join('\n'));
             }
             return;
         }
@@ -251,7 +346,16 @@ export async function flowAutoFix(gh, { repo, pr, provider, dryRun }) {
     if (changedFiles === null) {
         logger.error('getChangedFiles() failed (git error) before commit — aborting.');
         if (!dryRun) {
-            await gh.postComment(repo, pr, '⚠️ **Auto-Fix Gagal**\n\nGagal membaca status git sebelum commit. Silakan cek log Jenkins untuk detail.');
+            await gh.postComment(repo, pr, [
+                `## ❌ Auto-Fix — Gagal`,
+                ``,
+                `Gagal membaca status Git sebelum commit.`,
+                ``,
+                `---`,
+                ``,
+                `### Langkah Selanjutnya`,
+                `- Periksa log Jenkins untuk detail lebih lanjut`,
+            ].join('\n'));
         }
         return;
     }
@@ -259,7 +363,17 @@ export async function flowAutoFix(gh, { repo, pr, provider, dryRun }) {
         if (dryRun) {
             logger.info(`[DRY-RUN] Would post no-changes comment to ${repo}#${pr}`);
         } else {
-            await gh.postComment(repo, pr, '🤖 Maaf, saya tidak dapat menemukan solusi atau perubahan kode yang diperlukan untuk issue ini.');
+            await gh.postComment(repo, pr, [
+                `## 🤖 Auto-Fix — Tidak Ada Perubahan`,
+                ``,
+                `Bot tidak menemukan solusi atau perubahan kode yang diperlukan untuk issue ini.`,
+                ``,
+                `---`,
+                ``,
+                `### Langkah Selanjutnya`,
+                `- Perjelas deskripsi issue dengan detail tambahan`,
+                `- Tambahkan kembali label \`auto-fix\` untuk mencoba ulang`,
+            ].join('\n'));
         }
         logger.info('No changes made by LLM.');
         return;
@@ -276,7 +390,16 @@ export async function flowAutoFix(gh, { repo, pr, provider, dryRun }) {
     if (!pushOk) {
         logger.error('Failed to commit or push changes.');
         if (!dryRun) {
-            await gh.postComment(repo, pr, '⚠️ **Auto-Fix Gagal**\n\nSaya berhasil membuat perubahan kode, namun gagal saat mencoba commit atau push ke repository. Silakan cek log Jenkins untuk detail.');
+            await gh.postComment(repo, pr, [
+                `## ❌ Auto-Fix — Gagal`,
+                ``,
+                `Perubahan kode berhasil dibuat, namun gagal saat commit atau push ke repository.`,
+                ``,
+                `---`,
+                ``,
+                `### Langkah Selanjutnya`,
+                `- Periksa log Jenkins untuk detail lebih lanjut`,
+            ].join('\n'));
         }
         return;
     }
@@ -291,7 +414,13 @@ export async function flowAutoFix(gh, { repo, pr, provider, dryRun }) {
     if (dryRun) {
         logger.info(`[DRY-RUN] Would post PR link comment to ${repo}#${pr}`);
     } else {
-        await gh.postComment(repo, pr, `🤖 Saya telah mencoba memperbaiki issue ini. Silakan review Pull Request berikut: ${prResponse.html_url}`);
+        await gh.postComment(repo, pr, [
+            `## ✅ Auto-Fix — Selesai`,
+            ``,
+            `Bot telah membuat Pull Request untuk memperbaiki issue ini.`,
+            ``,
+            `🔗 **Review PR:** ${prResponse.html_url}`,
+        ].join('\n'));
     }
     logger.info(`Pull request created successfully: ${prResponse.html_url}`);
 }
@@ -309,7 +438,11 @@ export async function flowAutoClose(gh, { repo, pr, headBranch, dryRun }) {
     const issueNumber = parseInt(match[1], 10);
     logger.info(`Triggered FLOW E: Auto-close Issue #${issueNumber} after PR #${pr} merged.`);
 
-    const comment = `🤖 Issue ini ditutup secara otomatis karena Pull Request #${pr} telah di-merge.`;
+    const comment = [
+        `## ✅ Issue Ditutup`,
+        ``,
+        `Issue ini ditutup secara otomatis karena Pull Request #${pr} telah di-merge.`,
+    ].join('\n');
     if (dryRun) {
         logger.info(`[DRY-RUN] Would close issue #${issueNumber} on ${repo}`);
     } else {
