@@ -214,4 +214,42 @@ export class GitHubClient {
         }
         return { isMassive: false, prData: pr };
     }
+
+    // Add a label to a PR/Issue
+    async addLabel(repoFullName, issueNumber, label) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        logger.info(`Adding label "${label}" to ${repoFullName}#${issueNumber}...`);
+        await withRetry(
+            () => this.octokit.issues.addLabels({ owner, repo, issue_number: issueNumber, labels: [label] }),
+            `ADD label "${label}" #${issueNumber}`
+        );
+    }
+
+    // Remove a label from a PR/Issue (safe if label doesn't exist)
+    async removeLabel(repoFullName, issueNumber, label) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        logger.info(`Removing label "${label}" from ${repoFullName}#${issueNumber}...`);
+        try {
+            await withRetry(
+                () => this.octokit.issues.removeLabel({ owner, repo, issue_number: issueNumber, name: label }),
+                `REMOVE label "${label}" #${issueNumber}`
+            );
+        } catch (err) {
+            if (err.status === 404) {
+                logger.info(`Label "${label}" not found on #${issueNumber} — skipping removal.`);
+            } else {
+                throw err;
+            }
+        }
+    }
+
+    // Create a commit status (for blocking/allowing merge)
+    async createCommitStatus(repoFullName, sha, state, description, context) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        logger.info(`Setting commit status "${state}" on ${sha.slice(0, 7)} (${context})...`);
+        await withRetry(
+            () => this.octokit.repos.createCommitStatus({ owner, repo, sha, state, description, context }),
+            `POST status ${sha.slice(0, 7)}`
+        );
+    }
 }

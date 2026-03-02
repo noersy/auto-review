@@ -1,7 +1,8 @@
-import { buildReviewPrompt, buildReplyPrompt, buildIssueFixPrompt, buildIssueFixRetryPrompt, buildIssueValidationPrompt, buildSummaryPrompt } from './prompts.js';
+import { buildReviewPrompt, buildReplyPrompt, buildIssueFixPrompt, buildIssueFixRetryPrompt, buildIssueValidationPrompt, buildSummaryPrompt, buildSecurityScanPrompt } from './prompts.js';
 import { logger } from './logger.js';
 import config from './config.js';
 import { runProviderCLI } from './provider.js';
+import { parseSecurityResult, shouldBlockMerge, buildSecurityReport } from './security.js';
 import { setupBranch, getChangedFiles, commitAndPush } from './git.js';
 
 /**
@@ -103,6 +104,67 @@ export async function flowReview(gh, repo, prNumber, provider, dryRun) {
         } else {
             await gh.postComment(repo, prNumber, reviewBody);
             logger.info('Review posted successfully.');
+        }
+    }
+
+    // --- Security Guardrails ---
+    if (config.SECURITY_SCAN_ENABLED) {
+        logger.info('Running security vulnerability scan...');
+        try {
+            const securityRaw = await runProviderCLI(provider, buildSecurityScanPrompt(prData.title, targetBranch, repoDir));
+            const securityResult = parseSecurityResult(securityRaw);
+
+            if (!securityResult) {
+                logger.warn('Security scan produced unparseable output — skipping security report.');
+            } else {
+                const blocked = shouldBlockMerge(securityResult);
+                const report = buildSecurityReport(securityResult, blocked);
+                const headSha = prData.head.sha;
+
+                if (blocked) {
+                    // Critical/High: label + block + report
+                    if (dryRun) {
+                        logger.info(`[DRY-RUN] Would add label "${config.SECURITY_RISK_LABEL}" to ${repo}#${prNumber}`);
+                        logger.info(`[DRY-RUN] Would set commit status "failure" on ${headSha.slice(0, 7)}`);
+                        logger.info(`[DRY-RUN] Would post security report to ${repo}#${prNumber}`);
+                    } else {
+                        await gh.addLabel(repo, prNumber, config.SECURITY_RISK_LABEL);
+                        await gh.createCommitStatus(repo, headSha, 'failure',
+                            `Security risk: ${securityResult.overallRisk} severity detected`,
+                            config.SECURITY_STATUS_CONTEXT);
+                        await gh.postComment(repo, prNumber, report);
+                    }
+                    logger.warn(`Security scan: ${securityResult.overallRisk.toUpperCase()} risk — merge blocked.`);
+                } else if (securityResult.vulnerabilities.length > 0) {
+                    // Medium/Low: clear label + pass status + informational report
+                    if (dryRun) {
+                        logger.info(`[DRY-RUN] Would remove label "${config.SECURITY_RISK_LABEL}" from ${repo}#${prNumber}`);
+                        logger.info(`[DRY-RUN] Would set commit status "success" on ${headSha.slice(0, 7)}`);
+                        logger.info(`[DRY-RUN] Would post security report to ${repo}#${prNumber}`);
+                    } else {
+                        await gh.removeLabel(repo, prNumber, config.SECURITY_RISK_LABEL);
+                        await gh.createCommitStatus(repo, headSha, 'success',
+                            'Security scan passed (minor findings)',
+                            config.SECURITY_STATUS_CONTEXT);
+                        await gh.postComment(repo, prNumber, report);
+                    }
+                    logger.info('Security scan: minor findings reported.');
+                } else {
+                    // Clean: clear label + pass status (no comment needed)
+                    if (dryRun) {
+                        logger.info(`[DRY-RUN] Would remove label "${config.SECURITY_RISK_LABEL}" from ${repo}#${prNumber}`);
+                        logger.info(`[DRY-RUN] Would set commit status "success" on ${headSha.slice(0, 7)}`);
+                    } else {
+                        await gh.removeLabel(repo, prNumber, config.SECURITY_RISK_LABEL);
+                        await gh.createCommitStatus(repo, headSha, 'success',
+                            'No security vulnerabilities detected',
+                            config.SECURITY_STATUS_CONTEXT);
+                    }
+                    logger.info('Security scan: clean — no vulnerabilities found.');
+                }
+            }
+        } catch (err) {
+            logger.warn(`Security scan failed (non-fatal): ${err.message}`);
         }
     }
 }

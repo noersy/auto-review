@@ -78,6 +78,59 @@ This is a second attempt. Be more thorough:
 DO NOT ask for confirmation. Edit the files directly.`;
 }
 
+export function buildSecurityScanPrompt(prTitle, targetBranch, repoDir) {
+    return `You are a Security Engineer specialized in application security (AppSec).
+I have checked out a Pull Request branch titled "${prTitle}".
+The repository is located at ${repoDir}. Inspect the changes using \`git diff origin/${targetBranch}...\` inside ${repoDir}.
+
+Your task is to analyze the code changes ONLY for security vulnerabilities. Focus on:
+1. SQL Injection
+2. Cross-Site Scripting (XSS)
+3. Hardcoded Credentials / Secrets
+4. Insecure Deserialization
+5. Path Traversal
+6. Command Injection
+7. Server-Side Request Forgery (SSRF)
+8. Insecure Direct Object References (IDOR)
+9. Any other security-relevant issues
+
+For each vulnerability found, determine the severity:
+- critical: Directly exploitable, leads to full system compromise, data breach, or RCE
+- high: Exploitable with some conditions, leads to significant data exposure or privilege escalation
+- medium: Requires specific conditions to exploit, limited impact
+- low: Informational, best-practice violation, minimal direct risk
+
+Respond ONLY with a JSON object in this exact format, wrapped inside <json> and </json> tags.
+All text fields MUST be written in English:
+<json>
+{
+  "vulnerabilities": [
+    {
+      "type": "SQL_INJECTION | XSS | HARDCODED_CREDENTIALS | INSECURE_DESERIALIZATION | PATH_TRAVERSAL | COMMAND_INJECTION | SSRF | IDOR | OTHER",
+      "severity": "critical | high | medium | low",
+      "file": "path/to/file",
+      "line": 42,
+      "description": "Brief description of the vulnerability",
+      "suggestion": "Specific remediation suggestion"
+    }
+  ],
+  "summary": "Brief overall security assessment",
+  "overallRisk": "critical | high | medium | low | none"
+}
+</json>
+
+If NO vulnerabilities are found, return:
+<json>
+{
+  "vulnerabilities": [],
+  "summary": "No security vulnerabilities detected in this change.",
+  "overallRisk": "none"
+}
+</json>
+
+DO NOT ask for confirmation. Analyze and return the JSON directly.`;
+}
+
 export function buildIssueValidationPrompt(issueTitle, issueBody) {
     return `You are an expert Principal Software Engineer.
 An issue has been opened in the repository with the following details.

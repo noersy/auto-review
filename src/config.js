@@ -17,4 +17,10 @@ export default {
     // LLM Models
     GEMINI_MODEL: 'gemini-3.1-pro-preview',
     // GEMINI_MODEL: 'gemini-2.5-pro',
+
+    // Security Scanner
+    SECURITY_SCAN_ENABLED: true,
+    SECURITY_RISK_LABEL: 'security-risk',
+    SECURITY_STATUS_CONTEXT: 'auto-review/security',
+    SECURITY_BLOCK_ON: ['critical', 'high'],
 };
