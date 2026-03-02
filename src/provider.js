@@ -14,7 +14,7 @@ export async function runProviderCLI(provider, promptText) {
         '--verbose'
     ];
 
-    const repoDir = process.env.REPO_DIR ?? '/repo';
+    const repoDir = process.env.REPO_DIR ?? process.cwd();
     const geminiArgs = [
         '--yes', '@google/gemini-cli', '-p', promptText,
         '-y',
@@ -97,7 +97,7 @@ export async function runProviderCLI(provider, promptText) {
         const timeout = setTimeout(() => {
             proc.kill('SIGTERM');
             // Force-kill after 5 s grace period if process ignores SIGTERM
-            setTimeout(() => { try { proc.kill('SIGKILL'); } catch (_) {} }, 5000);
+            setTimeout(() => { try { proc.kill('SIGKILL'); } catch (_) { } }, 5000);
             reject(new Error(`${provider.toUpperCase()} CLI timed out after ${CLI_TIMEOUT_MS / 60000} minutes`));
         }, CLI_TIMEOUT_MS);
 
