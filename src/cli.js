@@ -16,9 +16,9 @@ dotenv.config();
 function detectRepo() {
     try {
         const url = execSync('git remote get-url origin', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-        // Match HTTPS: https://github.com/owner/repo.git
-        // Match SSH:   git@github.com:owner/repo.git
-        const match = url.match(/github\.com[/:]([\w.-]+\/[\w.-]+?)(?:\.git)?$/i);
+        // Match SSH:   git@<any-host>:owner/repo.git  (supports aliases like github-venturo)
+        // Match HTTPS: https://<any-host>/owner/repo.git
+        const match = url.match(/[/:]([\w.-]+\/[\w.-]+?)(?:\.git)?$/);
         if (match) return match[1];
     } catch (_) { /* not a git repo or no remote */ }
     return null;
