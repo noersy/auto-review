@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import readline from 'readline';
 import { logger } from './logger.js';
 import config from './config.js';
 
@@ -44,55 +45,55 @@ export async function runProviderCLI(provider, promptText) {
             stderrBuf += chunk.toString();
         });
 
-        let stdoutBuf = '';
         let finalResult = null;
 
-        proc.stdout.on('data', chunk => {
-            const raw = chunk.toString();
-            stdoutBuf += raw;
-            const lines = stdoutBuf.split('\n');
-            stdoutBuf = lines.pop(); // keep incomplete last line
-            for (const line of lines) {
-                if (!line.trim()) continue;
-                try {
-                    const event = JSON.parse(line);
+        const rl = readline.createInterface({
+            input: proc.stdout,
+            terminal: false
+        });
 
-                    if (provider === 'gemini') {
-                        /*
-                         * Gemini stream-json format:
-                         * Text chunks come in as: {"type":"message","role":"assistant","content":"...","delta":true}
-                         * The "result" event only contains stats.
-                         */
-                        if (event.type === 'message' && event.role === 'assistant' && event.content) {
-                            finalResult = (finalResult || '') + event.content;
-                            if (event.content.trim()) {
-                                logger.info(`[Gemini] ${event.content.trim()} `);
-                            }
-                        }
-                    } else {
-                        /*
-                         * Claude stream-json format (--output-format stream-json --verbose):
-                         * - assistant: {"type":"assistant","message":{"content":[{"type":"text","text":"..."}|{"type":"tool_use","name":"..."}]}}
-                         * - result:    {"type":"result","subtype":"success","result":"..."}
-                         * Text is accumulated directly into finalResult from assistant events;
-                         * the result event's field is used only if no text was streamed.
-                         */
-                        if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
-                            for (const block of event.message.content) {
-                                if (block.type === 'text' && block.text) {
-                                    finalResult = (finalResult || '') + block.text;
-                                    if (block.text.trim()) {
-                                        logger.info(`[Claude] ${block.text.trim()}`);
-                                    }
-                                } else if (block.type === 'tool_use') {
-                                    logger.info(`[Claude] tool: ${block.name} (${JSON.stringify(block.input).slice(0, 120)})`);
-                                }
-                            }
-                        } else if (event.type === 'result' && !finalResult) {
-                            finalResult = event.result || null;
+        rl.on('line', line => {
+            if (!line.trim()) return;
+            try {
+                const event = JSON.parse(line);
+
+                if (provider === 'gemini') {
+                    /*
+                     * Gemini stream-json format:
+                     * Text chunks come in as: {"type":"message","role":"assistant","content":"...","delta":true}
+                     * The "result" event only contains stats.
+                     */
+                    if (event.type === 'message' && event.role === 'assistant' && event.content) {
+                        finalResult = (finalResult || '') + event.content;
+                        if (event.content.trim()) {
+                            logger.info(`[Gemini] ${event.content.trim()} `);
                         }
                     }
-                } catch (_) { /* ignore non-JSON lines */ }
+                } else {
+                    /*
+                     * Claude stream-json format (--output-format stream-json --verbose):
+                     * - assistant: {"type":"assistant","message":{"content":[{"type":"text","text":"..."}|{"type":"tool_use","name":"..."}]}}
+                     * - result:    {"type":"result","subtype":"success","result":"..."}
+                     * Text is accumulated directly into finalResult from assistant events;
+                     * the result event's field is used only if no text was streamed.
+                     */
+                    if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+                        for (const block of event.message.content) {
+                            if (block.type === 'text' && block.text) {
+                                finalResult = (finalResult || '') + block.text;
+                                if (block.text.trim()) {
+                                    logger.info(`[Claude] ${block.text.trim()}`);
+                                }
+                            } else if (block.type === 'tool_use') {
+                                logger.info(`[Claude] tool: ${block.name} (${JSON.stringify(block.input).slice(0, 120)})`);
+                            }
+                        }
+                    } else if (event.type === 'result' && !finalResult) {
+                        finalResult = event.result || null;
+                    }
+                }
+            } catch (err) {
+                logger.warn(`Failed to parse stream JSON line: ${err.message}. Raw: ${line.slice(0, 150)}`);
             }
         });
 
@@ -109,27 +110,6 @@ export async function runProviderCLI(provider, promptText) {
 
         proc.on('close', code => {
             clearTimeout(timeout);
-            // Process any remaining buffered content that lacked a trailing newline
-            if (stdoutBuf.trim()) {
-                try {
-                    const event = JSON.parse(stdoutBuf);
-                    if (provider === 'gemini') {
-                        if (event.type === 'message' && event.role === 'assistant' && event.content) {
-                            finalResult = (finalResult || '') + event.content;
-                        }
-                    } else {
-                        if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
-                            for (const block of event.message.content) {
-                                if (block.type === 'text' && block.text) {
-                                    finalResult = (finalResult || '') + block.text;
-                                }
-                            }
-                        } else if (event.type === 'result' && !finalResult) {
-                            finalResult = event.result || null;
-                        }
-                    }
-                } catch (_) { /* ignore non-JSON remainder */ }
-            }
             if (code !== 0) {
                 if (finalResult) {
                     logger.info(`${provider.toUpperCase()} CLI exited with code ${code}, but review content was already received. Proceeding with partial result.`);

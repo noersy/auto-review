@@ -175,8 +175,20 @@ export async function flowAutoFix(gh, { repo, pr, provider, dryRun }) {
 
     let validationResult;
     try {
-        const jsonStrMatch = validationResultRaw.match(/\{[\s\S]*?\}/);
-        const jsonStr = jsonStrMatch ? jsonStrMatch[0] : validationResultRaw;
+        const jsonMatch = validationResultRaw.match(/<json>([\s\S]*?)<\/json>/i);
+        let jsonStr = validationResultRaw;
+
+        if (jsonMatch) {
+            jsonStr = jsonMatch[1];
+        } else {
+            // Fallback for models ignoring the tag, extracting between { and }
+            const firstBrace = validationResultRaw.indexOf('{');
+            const lastBrace = validationResultRaw.lastIndexOf('}');
+            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
+                jsonStr = validationResultRaw.slice(firstBrace, lastBrace + 1);
+            }
+        }
+
         validationResult = JSON.parse(jsonStr);
     } catch (err) {
         logger.error('Failed to parse validation result — aborting to avoid acting on ambiguous output. Raw: ' + validationResultRaw);
