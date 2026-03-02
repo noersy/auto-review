@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import { logger } from './logger.js';
 import config from './config.js';
 
-const CLI_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const CLI_TIMEOUT_MS = 30 * 60 * 1000; // 10 minutes
 
 export async function runProviderCLI(provider, promptText) {
     logger.info(`Executing ${provider.toUpperCase()} CLI...`);
@@ -32,7 +32,8 @@ export async function runProviderCLI(provider, promptText) {
         const proc = spawn('npx', providerArgs, {
             stdio: ['ignore', 'pipe', 'pipe'],
             env: { ...process.env, CI: 'true' },
-            shell: false
+            shell: false,
+            detached: true // Create a process group so we can kill the entire tree
         });
 
         // Pipe stderr live and also capture for diagnostics
@@ -94,10 +95,14 @@ export async function runProviderCLI(provider, promptText) {
             }
         });
 
+        const killProcessGroup = (signal) => {
+            try { process.kill(-proc.pid, signal); } catch (_) { }
+        };
+
         const timeout = setTimeout(() => {
-            proc.kill('SIGTERM');
+            killProcessGroup('SIGTERM');
             // Force-kill after 5 s grace period if process ignores SIGTERM
-            setTimeout(() => { try { proc.kill('SIGKILL'); } catch (_) { } }, 5000);
+            setTimeout(() => killProcessGroup('SIGKILL'), 5000);
             reject(new Error(`${provider.toUpperCase()} CLI timed out after ${CLI_TIMEOUT_MS / 60000} minutes`));
         }, CLI_TIMEOUT_MS);
 
