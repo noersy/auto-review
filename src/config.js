@@ -1,6 +1,6 @@
 export default {
     // Thresholds
-    MASSIVE_PR_LINES: 2600,        // Max total lines before bailing out
+    MASSIVE_PR_LINES: 5500,        // Max total lines before bailing out
     REPLY_COOLDOWN_MS: 60 * 1000,  // Minimum ms between bot replies on the same PR (Flow B)
 
     // Bot Identity
