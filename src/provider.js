@@ -30,6 +30,7 @@ export async function runProviderCLI(provider, promptText) {
 
     return new Promise((resolve, reject) => {
         const proc = spawn('npx', providerArgs, {
+            cwd: repoDir,
             stdio: ['ignore', 'pipe', 'pipe'],
             env: { ...process.env, CI: 'true' },
             shell: false,
