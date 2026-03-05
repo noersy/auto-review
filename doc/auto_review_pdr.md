@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Document Status | Draft |
-| Version | 1.2 |
+| Version | 1.3 |
 | Date | 2026-03-05 |
 | Author | Engineering Team |
 | Reviewer | — |
@@ -47,7 +47,10 @@ Auto-Review Bot adalah sistem otomasi berbasis LLM yang diintegrasikan ke dalam 
 | Dependency | Version / Notes |
 |---|---|
 | Node.js | Runtime eksekusi bot |
-| Octokit | GitHub REST API client |
+| `@octokit/rest` | `^21.0.0` — GitHub REST API client |
+| `commander` | `^12.0.0` — CLI argument parsing |
+| `dotenv` | `^16.4.0` — env var loading |
+| `winston` | `^3.14.0` — logging |
 | Claude CLI | LLM provider default |
 | Gemini CLI | LLM provider alternatif |
 | Jenkins | Generic Webhook Trigger plugin |
@@ -202,42 +205,60 @@ Semua event masuk dari GitHub Webhook diarahkan berdasarkan kondisi berikut di `
 | D — Manual Re-Review | Sama dengan Flow A | — | 30 menit |
 | E — Auto Close Issue | 0 | — | < 5 detik |
 
-> LLM calls yang gagal karena timeout dikomunikasikan sebagai komentar ke PR/Issue. Tidak ada automatic retry di level flow — retry hanya ada di level GitHub API (HTTP 429/5xx).
+LLM calls yang gagal karena timeout dikomunikasikan sebagai komentar ke PR/Issue. Tidak ada automatic retry di level flow — retry hanya ada di level GitHub API (HTTP 429/5xx).
 
 ---
 
 ## 7. Security Scan Output Format
 
-Security scan menggunakan `buildSecurityScanPrompt` dan mengharapkan output JSON dari LLM dengan struktur berikut:
+Security scan menggunakan `buildSecurityScanPrompt`. Output JSON yang diharapkan dari LLM:
 
 ```json
 {
-  "riskLevel": "critical | high | medium | low | clean",
-  "findings": [
+  "vulnerabilities": [
     {
+      "type": "SQL_INJECTION | XSS | HARDCODED_CREDENTIALS | PATH_TRAVERSAL | COMMAND_INJECTION | SSRF | IDOR | OTHER",
       "severity": "critical | high | medium | low",
       "file": "path/to/file.js",
       "line": 42,
-      "description": "Hardcoded secret detected"
+      "description": "Brief description of the vulnerability",
+      "suggestion": "Specific remediation suggestion"
     }
   ],
-  "summary": "Brief overall assessment"
+  "summary": "Brief overall security assessment",
+  "overallRisk": "critical | high | medium | low | none"
 }
 ```
 
-`security.js` mem-parse output ini untuk menentukan tindakan selanjutnya:
+`security.js` mem-parse `overallRisk` untuk menentukan tindakan:
 
 - `critical` / `high` → label `security-risk` + commit status `failure`
 - `medium` / `low` → hapus label `security-risk` + commit status `success` + post findings
-- `clean` → hapus label `security-risk` + commit status `success`, tidak ada komentar
+- `none` → hapus label `security-risk` + commit status `success`, tidak ada komentar
 
 ---
 
-## 8. Supporting Modules
+## 8. Prompt Context Reference
+
+| Prompt Function | Context yang Dikirim ke LLM |
+|---|---|
+| `buildReviewPrompt` | PR title, additions, deletions, target branch, repo dir path |
+| `buildSummaryPrompt` | PR title, target branch, repo dir path |
+| `buildReplyPrompt` | Full comment thread (semua komentar PR), repo dir path |
+| `buildIssueFixPrompt` | Issue title, issue body, repo dir path |
+| `buildIssueFixRetryPrompt` | Issue title, issue body, repo dir path (dengan instruksi lebih eksplisit) |
+| `buildSecurityScanPrompt` | PR title, target branch, repo dir path |
+| `buildIssueValidationPrompt` | Issue title, issue body (tanpa repo dir — hanya teks) |
+
+> `buildReplyPrompt` dan `buildIssueFixPrompt` menggunakan XML tag wrapping (`<conversation>`, `<issue>`) dengan instruksi eksplisit untuk tidak mengikuti instruksi dalam tag tersebut — sebagai mitigasi prompt injection.
+
+---
+
+## 9. Supporting Modules
 
 | Module | Responsibility |
 |---|---|
-| `github.js` | Semua operasi GitHub API (GET/POST PR, Issue, Comment, Label, Status). Menggunakan retry logic dengan exponential backoff untuk HTTP 429, 502, 503, 504. |
+| `github.js` | Semua operasi GitHub API (GET/POST PR, Issue, Comment, Label, Status). Retry logic: 3 attempts, base delay 2.000 ms × attempt number. |
 | `provider.js` | Menjalankan LLM CLI (claude / gemini) sebagai child process. Timeout: 10 menit. |
 | `prompts.js` | Membangun semua prompt LLM: review, reply, fix, fix-retry, validation, summary, security scan. |
 | `security.js` | Mem-parse output JSON dari LLM security scan, menentukan level risiko, dan membangun laporan keamanan. |
@@ -246,9 +267,18 @@ Security scan menggunakan `buildSecurityScanPrompt` dan mengharapkan output JSON
 | `cli.js` | Antarmuka CLI manual untuk menjalankan flow secara lokal: `review`, `fix`, `reply`, `trigger`. |
 | `config.js` | Konstanta konfigurasi: threshold baris, label names, bot username, cooldown, model LLM. |
 
+### GitHub API Retry Logic Detail
+
+| Parameter | Value |
+|---|---|
+| Max retries | 3 |
+| Retryable HTTP codes | 429, 502, 503, 504 |
+| Base delay | 2.000 ms × attempt number (linear backoff) |
+| HTTP 429 override | Menggunakan nilai dari header `Retry-After` (integer seconds atau HTTP-date) |
+
 ---
 
-## 9. Configuration Reference
+## 10. Configuration Reference
 
 | Parameter | Value | Description |
 |---|---|---|
@@ -265,44 +295,154 @@ Security scan menggunakan `buildSecurityScanPrompt` dan mengharapkan output JSON
 
 ---
 
-## 10. Observability
+## 11. Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `GITHUB_TOKEN` | **Yes** | GitHub Personal Access Token atau App token. Divalidasi saat startup — bot berhenti jika tidak ada. |
+| `JENKINS_URL` | CLI only | Base URL Jenkins, e.g. `http://jenkins:8080`. Digunakan oleh `cli.js trigger`. |
+| `JENKINS_TOKEN` | CLI only | Generic Webhook Trigger token. Digunakan oleh `cli.js trigger`. |
+| `JENKINS_USER` | CLI only | Username Jenkins untuk Basic Auth. Opsional jika Jenkins tidak mewajibkan auth. |
+| `JENKINS_API_TOKEN` | CLI only | API token Jenkins untuk Basic Auth. Opsional. |
+
+> Variabel dapat di-set via file `.env` di root project (menggunakan `dotenv`), atau sebagai environment variable di Jenkins build environment.
+
+---
+
+## 12. Jenkins Job Configuration
+
+Bot dieksekusi oleh Jenkins job yang dipicu via **Generic Webhook Trigger** plugin. Konfigurasi minimal yang diperlukan:
+
+### Webhook Endpoint
+
+```
+POST http://<jenkins>/generic-webhook-trigger/invoke?token=<WEBHOOK_TOKEN>
+```
+
+### Generic Trigger Variables
+
+| Variable | JSONPath Expression | Description |
+|---|---|---|
+| `GH_ACTION` | `$.action` | GitHub event action |
+| `GH_REPO` | `$.repository.full_name` | Repository full name |
+| `GH_PR_NUMBER` | `$.pull_request.number` | PR number |
+| `GH_HEAD_BRANCH` | `$.pull_request.head.ref` | PR head branch |
+| `GH_MERGED` | `$.pull_request.merged` | PR merged status |
+| `GH_LABEL` | `$.label.name` | Label yang di-apply |
+| `GH_COMMENT_BODY` | `$.comment.body` | Isi komentar |
+| `GH_ISSUE_NUMBER` | `$.issue.number` | Issue number |
+| `GH_SENDER` | `$.sender.login` | Event sender username |
+| `GH_PROVIDER` | `$.provider` | LLM provider override (claude/gemini) |
+
+### Build Step
+
+```bash
+node src/index.js \
+  --action "$GH_ACTION" \
+  --repo "$GH_REPO" \
+  --pr-number "$GH_PR_NUMBER" \
+  --head-branch "$GH_HEAD_BRANCH" \
+  --merged "$GH_MERGED" \
+  --label "$GH_LABEL" \
+  --comment "$GH_COMMENT_BODY" \
+  --issue-number "$GH_ISSUE_NUMBER" \
+  --sender "$GH_SENDER" \
+  --provider "${GH_PROVIDER:-claude}"
+```
+
+---
+
+## 13. Local Development
+
+### Prerequisites
+
+- Node.js (versi yang mendukung ES modules)
+- `GITHUB_TOKEN` di-set di environment atau file `.env`
+- LLM CLI terinstall dan terauthentikasi (`claude` atau `gemini`)
+
+### Setup
+
+```bash
+git clone <repo-url>
+cd auto-review
+npm install
+echo "GITHUB_TOKEN=<your_token>" > .env
+```
+
+### Running Flows Manually
+
+```bash
+# Manual review PR
+node src/cli.js review --repo owner/repo --pr 123
+
+# Manual fix issue
+node src/cli.js fix --repo owner/repo --issue 456
+
+# Reply to comment
+node src/cli.js reply --repo owner/repo --pr 123
+
+# Trigger Jenkins job (requires JENKINS_URL, JENKINS_TOKEN)
+node src/cli.js trigger review --repo owner/repo --pr 123
+
+# Dry-run (no writes to GitHub/Git, LLM tetap dieksekusi)
+node src/cli.js review --repo owner/repo --pr 123 --dry-run
+
+# Use Gemini instead of Claude
+node src/cli.js review --repo owner/repo --pr 123 --provider gemini
+```
+
+---
+
+## 14. Testing Strategy
+
+Bot tidak memiliki automated test suite saat ini. Pendekatan testing yang ada:
+
+| Method | Description |
+|---|---|
+| `--dry-run` flag | Menonaktifkan semua write operation (GitHub API + Git). Digunakan untuk memvalidasi LLM output dan flow logic tanpa side effect. |
+| Manual CLI trigger | `node src/cli.js <command>` dapat dijalankan terhadap repository test/sandbox di GitHub. |
+| Jenkins dry-run | Jalankan Jenkins job dengan `--dry-run` pada PR atau issue di repository sandbox. |
+
+**Gap yang diketahui:** Tidak ada unit test untuk fungsi helper (`github.js`, `security.js`, `git.js`). Tidak ada integration test otomatis. Test dilakukan sepenuhnya secara manual sebelum deploy.
+
+---
+
+## 15. Observability
 
 Bot tidak memiliki dedicated metrics server. Observability dilakukan melalui:
 
 | Signal | Mechanism |
 |---|---|
-| Execution log | `console.log` / `console.error` — tersedia di Jenkins build log |
+| Execution log | `console.log` / `console.error` via `winston` — tersedia di Jenkins build log |
 | Flow failure | Komentar error dipost ke PR / Issue secara otomatis |
 | LLM timeout | Komentar timeout dipost ke PR / Issue |
 | Security findings | Komentar dan commit status di GitHub |
-| Silent failure detection | Tidak ada. Jika Jenkins job tidak dipicu (webhook misconfiguration), tidak ada alert otomatis. |
-
-> **Gap yang diketahui:** Tidak ada alerting jika webhook dari GitHub gagal diterima Jenkins. Bot diam tanpa indikasi kegagalan.
+| Silent failure detection | **Gap:** Tidak ada alerting jika webhook dari GitHub gagal diterima Jenkins. Bot diam tanpa indikasi kegagalan. |
 
 ---
 
-## 11. Key Design Decisions
+## 16. Key Design Decisions
 
-### 11.1 Idempotency
+### 16.1 Idempotency
 
 - Flow A: Satu komentar review per PR. Bot mendeteksi komentar yang sudah ada via HTML marker dan melakukan update, bukan membuat komentar baru.
 - Flow C: Satu PR per issue. Eksekusi dihentikan jika branch `auto-fix/issue-N` sudah memiliki open PR.
 
-### 11.2 Dry-Run Mode
+### 16.2 Dry-Run Mode
 
 Tersedia di semua flow melalui flag `--dry-run`. Saat aktif, semua operasi write ke GitHub dan Git dinonaktifkan. LLM tetap dijalankan untuk keperluan validasi output.
 
-### 11.3 Sub-Issue Support
+### 16.3 Sub-Issue Support
 
 Flow C mendukung hierarki issue. Jika suatu issue adalah sub-issue dari issue lain, branch fix akan dibuat dari branch `auto-fix/issue-{parent}` (jika tersedia di remote), bukan dari default branch.
 
-### 11.4 Dual LLM Provider
+### 16.4 Dual LLM Provider
 
 Bot mendukung dua provider: Claude (default) dan Gemini. Provider dipilih via flag `--provider` saat pemanggilan. Provider dieksekusi sebagai CLI subprocess, bukan melalui API SDK.
 
 ---
 
-## 12. Error Handling Summary
+## 17. Error Handling Summary
 
 | Scenario | Behavior |
 |---|---|
@@ -317,18 +457,18 @@ Bot mendukung dua provider: Claude (default) dan Gemini. Provider dipilih via fl
 
 ---
 
-## 13. Open Questions
+## 18. Open Questions
 
 | # | Question | Owner | Due | Status |
 |---|---|---|---|---|
 | 1 | Apakah threshold 5.500 baris sudah optimal untuk semua repository di organisasi? | Backend Lead | 2026-03-12 | Open |
-| 2 | Model LLM mana yang lebih akurat untuk codebase yang ada — perlu A/B test minimal 50 PR? | Backend Lead | 2026-03-19 | Open |
+| 2 | Model LLM mana yang lebih akurat — perlu A/B test minimal 50 PR? | Backend Lead | 2026-03-19 | Open |
 | 3 | Apakah perlu approval gate sebelum PR auto-fix di-merge ke branch utama? | Engineering + Product | 2026-03-12 | Open |
 | 4 | Bagaimana mendeteksi silent failure jika Jenkins tidak menerima webhook? | DevOps | 2026-03-19 | Open |
 
 ---
 
-## 14. Diagram Reference
+## 19. Diagram Reference
 
 | # | Diagram | File |
 |---|---|---|
@@ -343,16 +483,17 @@ Bot mendukung dua provider: Claude (default) dan Gemini. Provider dipilih via fl
 
 ---
 
-## 15. Revision History
+## 20. Revision History
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 1.0 | 2026-03-05 | Engineering Team | Initial draft |
-| 1.2 | 2026-03-05 | Engineering Team | Added Flow D diagram, SLA matrix, security scan output format, observability section, Flow C split into two diagrams, actionable open questions |
+| 1.2 | 2026-03-05 | Engineering Team | Added Flow D diagram, SLA matrix, security scan format, observability, Flow C split, actionable open questions |
+| 1.3 | 2026-03-05 | Engineering Team | Added env vars, Jenkins job config, local dev guide, testing strategy, prompt context table, retry logic detail |
 
 ---
 
-## 16. Approval / Sign-off
+## 21. Approval / Sign-off
 
 | Role | Name | Status | Date |
 |---|---|---|---|
