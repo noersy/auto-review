@@ -74,7 +74,7 @@ pipeline {
                     env.GH_HEAD_BRANCH  = headBranch
                     env.GH_MERGED       = merged ? 'true' : 'false'
 
-                    def handled = (action in ['opened', 'synchronize', 'reopened', 'created']) ||
+                    def handled = (action in ['opened', 'synchronize', 'reopened', 'created', 'ready_for_review']) ||
                                   (action == 'labeled' && labelName in ['auto-fix', 'auto-review']) ||
                                   (action == 'closed'  && merged && headBranch)
 
@@ -120,7 +120,7 @@ pipeline {
                 expression {
                     // Only Flow A/D need workspace checkout (for /repo mount)
                     def action = env.GH_ACTION
-                    return (action in ['opened', 'synchronize', 'reopened']) ||
+                    return (action in ['opened', 'synchronize', 'reopened', 'ready_for_review']) ||
                            (action == 'labeled' && env.GH_LABEL_NAME == 'auto-review')
                 }
             }

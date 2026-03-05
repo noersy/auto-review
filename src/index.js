@@ -48,7 +48,7 @@ if (!/^\d+$/.test(opts.pr)) {
 }
 
 // Validate --action is a known value
-const KNOWN_ACTIONS = new Set(['opened', 'synchronize', 'reopened', 'created', 'labeled', 'closed']);
+const KNOWN_ACTIONS = new Set(['opened', 'synchronize', 'reopened', 'created', 'labeled', 'closed', 'ready_for_review']);
 if (!KNOWN_ACTIONS.has(opts.action)) {
     console.error(`Invalid --action value: "${opts.action}". Expected one of: ${[...KNOWN_ACTIONS].join(', ')}.`);
     process.exit(1);
@@ -64,14 +64,14 @@ async function main() {
     if (dryRun) logger.info('DRY-RUN MODE: GitHub and Git writes are disabled.');
 
     try {
-        const isNewPR = ['opened', 'synchronize', 'reopened'].includes(opts.action);
+        const isNewPR = ['opened', 'synchronize', 'reopened', 'ready_for_review'].includes(opts.action);
         const commentBody = opts.commentBody || '';
         const isReply = opts.action === 'created' && commentBody.includes(config.BOT_MENTION);
 
         // Flow A: New PR Review
         if (isNewPR) {
             logger.info(`Triggered FLOW A: New PR Review for ${opts.repo}#${opts.pr}`);
-            await flowReview(gh, opts.repo, opts.pr, opts.provider, dryRun);
+            await flowReview(gh, opts.repo, opts.pr, opts.provider, dryRun, { ignoreDrafts: true });
             return;
         }
 
@@ -102,7 +102,7 @@ async function main() {
         // Flow D: Manual Review via Label
         if (opts.action === 'labeled' && opts.labelName === config.AUTO_REVIEW_LABEL) {
             logger.info(`Triggered FLOW D: Manual Review via label for ${opts.repo}#${opts.pr}`);
-            await flowReview(gh, opts.repo, opts.pr, opts.provider, dryRun);
+            await flowReview(gh, opts.repo, opts.pr, opts.provider, dryRun, { ignoreDrafts: false });
             return;
         }
 

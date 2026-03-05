@@ -8,8 +8,14 @@ import { setupBranch, getChangedFiles, commitAndPush } from './git.js';
 /**
  * Flow A & D: Review a Pull Request.
  */
-export async function flowReview(gh, repo, prNumber, provider, dryRun) {
+export async function flowReview(gh, repo, prNumber, provider, dryRun, options = {}) {
     const { isMassive, prData } = await gh.checkMassivePR(repo, prNumber);
+
+    if (options.ignoreDrafts === true && prData.draft === true) {
+        logger.info(`Draft PR detected for ${repo}#${prNumber} — skipping auto-review.`);
+        return;
+    }
+
     if (isMassive) {
         if (dryRun) {
             logger.info(`[DRY-RUN] Would post massive-PR warning to ${repo}#${prNumber}`);

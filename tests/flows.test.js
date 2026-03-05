@@ -166,6 +166,43 @@ describe('flowReview', () => {
         expect(mockRunProviderCLI).not.toHaveBeenCalled();
     });
 
+    it('skips auto-review when PR is a draft and options.ignoreDrafts is true', async () => {
+        const draftPR = { ...prData, draft: true };
+        mockGh.checkMassivePR.mockResolvedValue({ isMassive: false, prData: draftPR });
+
+        await flowReview(mockGh, 'o/r', 1, 'gemini', false, { ignoreDrafts: true });
+
+        expect(mockRunProviderCLI).not.toHaveBeenCalled();
+        expect(mockGh.postComment).not.toHaveBeenCalled();
+        expect(mockGh.updatePRDescription).not.toHaveBeenCalled();
+    });
+
+    it('processes auto-review when PR is a draft but options.ignoreDrafts is false', async () => {
+        const draftPR = { ...prData, draft: true };
+        mockGh.checkMassivePR.mockResolvedValue({ isMassive: false, prData: draftPR });
+        mockGh.postComment.mockResolvedValue();
+        mockGh.removeLabel.mockResolvedValue();
+        mockGh.createCommitStatus.mockResolvedValue();
+
+        await flowReview(mockGh, 'o/r', 1, 'gemini', false, { ignoreDrafts: false });
+
+        expect(mockRunProviderCLI).toHaveBeenCalled();
+        expect(mockGh.postComment).toHaveBeenCalled();
+    });
+
+    it('processes auto-review when PR is not a draft and options.ignoreDrafts is true', async () => {
+        const nonDraftPR = { ...prData, draft: false };
+        mockGh.checkMassivePR.mockResolvedValue({ isMassive: false, prData: nonDraftPR });
+        mockGh.postComment.mockResolvedValue();
+        mockGh.removeLabel.mockResolvedValue();
+        mockGh.createCommitStatus.mockResolvedValue();
+
+        await flowReview(mockGh, 'o/r', 1, 'gemini', false, { ignoreDrafts: true });
+
+        expect(mockRunProviderCLI).toHaveBeenCalled();
+        expect(mockGh.postComment).toHaveBeenCalled();
+    });
+
     it('posts new review comment when no existing review', async () => {
         mockGh.postComment.mockResolvedValue();
         mockGh.removeLabel.mockResolvedValue();
