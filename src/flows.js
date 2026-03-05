@@ -96,21 +96,95 @@ export async function flowReview(gh, repo, prNumber, provider, dryRun, options =
         }
     }
 
-    const reviewBody = `<!-- auto-review-bot -->\n## 🤖 Auto-Review — ${provider.toUpperCase()}\n\n${reviewText}`;
-    if (existingReview) {
-        if (dryRun) {
-            logger.info(`[DRY-RUN] Would update existing review comment ${existingReview.id} on ${repo}#${prNumber}`);
+    // Helper to extract JSON from markdown output
+    const extractJSON = (text) => {
+        const jsonMatch = text.match(/<json>([\s\S]*?)<\/json>/i);
+        if (jsonMatch) return jsonMatch[1];
+        const firstBrace = text.indexOf('{');
+        const lastBrace = text.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
+            return text.slice(firstBrace, lastBrace + 1);
+        }
+        return null;
+    };
+
+    let reviewResult = null;
+    let fallbackText = reviewText;
+
+    if (reviewText) {
+        try {
+            const jsonStr = extractJSON(reviewText);
+            if (jsonStr) {
+                reviewResult = JSON.parse(jsonStr);
+            }
+        } catch (err) {
+            logger.warn('Failed to parse review JSON output, falling back to raw markdown.');
+        }
+    }
+
+    let summaryMarkdown = reviewText;
+    let inlineComments = [];
+
+    if (reviewResult && typeof reviewResult === 'object') {
+        summaryMarkdown = reviewResult.summary || "Review completed.";
+        inlineComments = Array.isArray(reviewResult.inline_comments) ? reviewResult.inline_comments : [];
+        fallbackText = `${summaryMarkdown}\n\n### Inline Comments (Fallback)\n${inlineComments.map(c => `- **${c.file}:${c.line}**: ${c.comment}`).join('\n')}`;
+    }
+
+    const reviewBody = `<!-- auto-review-bot -->\n## 🤖 Auto-Review — ${provider.toUpperCase()}\n\n${summaryMarkdown}`;
+    const fallbackBody = `<!-- auto-review-bot -->\n## 🤖 Auto-Review — ${provider.toUpperCase()}\n\n${fallbackText}`;
+
+    // Function to post the main comment
+    const postMainComment = async (bodyToPost) => {
+        if (existingReview) {
+            if (dryRun) {
+                logger.info(`[DRY-RUN] Would update existing review comment ${existingReview.id} on ${repo}#${prNumber}`);
+            } else {
+                await gh.updateComment(repo, existingReview.id, bodyToPost);
+                logger.info('Existing review comment updated.');
+            }
         } else {
-            await gh.updateComment(repo, existingReview.id, reviewBody);
-            logger.info('Existing review comment updated.');
+            if (dryRun) {
+                logger.info(`[DRY-RUN] Would post new review comment to ${repo}#${prNumber}`);
+            } else {
+                await gh.postComment(repo, prNumber, bodyToPost);
+                logger.info('Review posted successfully.');
+            }
+        }
+    };
+
+    if (inlineComments.length > 0) {
+        const ghComments = inlineComments.map(c => ({
+            path: c.file,
+            line: c.line,
+            body: c.comment
+        }));
+
+        try {
+            if (dryRun) {
+                logger.info(`[DRY-RUN] Would create PR review with ${ghComments.length} inline comments on ${repo}#${prNumber}`);
+                await postMainComment(reviewBody);
+            } else {
+                // We don't post the main body inside createPullRequestReview to avoid 
+                // duplicate comments if they just trigger the bot again. The main body 
+                // is updated in the existing PR comment.
+                const headSha = prData.head.sha;
+                const commitId = headSha; // GitHub API might need commit_id for line comments in some cases, often omitted if using `line`
+
+                await gh.createPullRequestReview(repo, prNumber, 'COMMENT', `Review by Auto-Review Bot. See main comment for summary.`, ghComments);
+                logger.info('Inline comments posted successfully via PR Review API.');
+
+                // Also update the main PR comment summary
+                await postMainComment(reviewBody);
+            }
+        } catch (err) {
+            // Github returns 422 if line is out of the diff or invalid
+            logger.warn(`Failed to post inline comments: ${err.message}. Falling back to main comment.`);
+            await postMainComment(fallbackBody);
         }
     } else {
-        if (dryRun) {
-            logger.info(`[DRY-RUN] Would post new review comment to ${repo}#${prNumber}`);
-        } else {
-            await gh.postComment(repo, prNumber, reviewBody);
-            logger.info('Review posted successfully.');
-        }
+        // No inline comments or JSON failed to parse
+        await postMainComment(fallbackBody);
     }
 
     // --- Security Guardrails ---

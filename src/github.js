@@ -108,6 +108,18 @@ export class GitHubClient {
         );
     }
 
+    // Create a pull request review with inline comments
+    async createPullRequestReview(repoFullName, prNumber, event, body, comments) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        logger.info(`Creating PR review (${event}) on ${repoFullName}#${prNumber} with ${comments ? comments.length : 0} comments...`);
+        // If comments is undefined/null/empty, it just creates a review comment without inline comments
+        const { data } = await withRetry(
+            () => this.octokit.pulls.createReview({ owner, repo, pull_number: prNumber, event, body, comments }),
+            `POST review #${prNumber}`
+        );
+        return data;
+    }
+
     // Fetch all comments once; returns { lastBotReplyTime, thread, existingReview }
     // lastBotReplyTime: ms timestamp of most recent bot comment (0 if none)
     // thread: formatted string of all comments for reply context

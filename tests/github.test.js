@@ -8,6 +8,7 @@ const mockOctokit = {
         list: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
+        createReview: jest.fn(),
     },
     issues: {
         get: jest.fn(),
@@ -389,6 +390,27 @@ describe('GitHubClient.createPullRequest', () => {
         mockOctokit.pulls.create.mockResolvedValue({ data: {} });
         await gh.createPullRequest('owner/repo', 'T', 'B', 'head-branch');
         expect(mockOctokit.pulls.create).toHaveBeenCalledWith(expect.objectContaining({ base: 'main' }));
+    });
+});
+
+// ─── createPullRequestReview ────────────────────────────────────────────────
+describe('GitHubClient.createPullRequestReview', () => {
+    it('calls pulls.createReview with the correct params', async () => {
+        mockOctokit.pulls.createReview.mockResolvedValue({ data: { id: 100 } });
+        const comments = [{ path: 'file.js', line: 10, body: 'test comment' }];
+        const result = await gh.createPullRequestReview('owner/repo', 42, 'COMMENT', 'Review body', comments);
+        expect(result).toEqual({ id: 100 });
+        expect(mockOctokit.pulls.createReview).toHaveBeenCalledWith({
+            owner: 'owner', repo: 'repo', pull_number: 42, event: 'COMMENT', body: 'Review body', comments,
+        });
+    });
+
+    it('works without comments array', async () => {
+        mockOctokit.pulls.createReview.mockResolvedValue({ data: { id: 101 } });
+        await gh.createPullRequestReview('owner/repo', 42, 'COMMENT', 'Only body');
+        expect(mockOctokit.pulls.createReview).toHaveBeenCalledWith(expect.objectContaining({
+            comments: undefined,
+        }));
     });
 });
 

@@ -18,6 +18,7 @@ const mockGh = {
     getDefaultBranch: jest.fn(),
     createPullRequest: jest.fn(),
     closeIssue: jest.fn(),
+    createPullRequestReview: jest.fn(),
 };
 
 const mockRunProviderCLI = jest.fn();
@@ -323,6 +324,70 @@ describe('flowReview', () => {
         await flowReview(mockGh, 'o/r', 1, 'gemini', true);
         expect(mockGh.addLabel).not.toHaveBeenCalled();
         expect(mockGh.createCommitStatus).not.toHaveBeenCalled();
+    });
+
+    it('parses JSON and posts inline comments via createPullRequestReview', async () => {
+        mockGh.postComment.mockResolvedValue();
+        mockGh.createPullRequestReview.mockResolvedValue();
+        mockParseSecurityResult.mockReturnValue(null);
+        mockShouldBlockMerge.mockReturnValue(false);
+
+        const jsonOutput = `
+<json>
+{
+  "summary": "Great PR overall.",
+  "inline_comments": [
+    { "file": "src/index.js", "line": 10, "comment": "Fix this typo." }
+  ]
+}
+</json>`;
+        mockRunProviderCLI.mockResolvedValue(jsonOutput);
+
+        await flowReview(mockGh, 'o/r', 1, 'gemini', false);
+
+        expect(mockGh.createPullRequestReview).toHaveBeenCalledWith(
+            'o/r', 1, 'COMMENT', expect.any(String),
+            [{ path: 'src/index.js', line: 10, body: 'Fix this typo.' }]
+        );
+        expect(mockGh.postComment).toHaveBeenCalledWith('o/r', 1, expect.stringContaining('Great PR overall.'));
+    });
+
+    it('falls back to main comment when inline comments fail to post', async () => {
+        mockGh.postComment.mockResolvedValue();
+        mockGh.createPullRequestReview.mockRejectedValue(Object.assign(new Error('Invalid line'), { status: 422 }));
+        mockParseSecurityResult.mockReturnValue(null);
+        mockShouldBlockMerge.mockReturnValue(false);
+
+        const jsonOutput = `
+<json>
+{
+  "summary": "Great PR overall.",
+  "inline_comments": [
+    { "file": "src/index.js", "line": 999, "comment": "Out of diff." }
+  ]
+}
+</json>`;
+        mockRunProviderCLI.mockResolvedValue(jsonOutput);
+
+        await flowReview(mockGh, 'o/r', 1, 'gemini', false);
+
+        expect(mockGh.createPullRequestReview).toHaveBeenCalled();
+        expect(mockGh.postComment).toHaveBeenCalledWith('o/r', 1, expect.stringContaining('Inline Comments (Fallback)'));
+        expect(mockGh.postComment).toHaveBeenCalledWith('o/r', 1, expect.stringContaining('Out of diff.'));
+    });
+
+    it('handles LLM output lacking proper JSON format by falling back to full text', async () => {
+        mockGh.postComment.mockResolvedValue();
+        mockGh.createPullRequestReview.mockResolvedValue();
+        mockParseSecurityResult.mockReturnValue(null);
+        mockShouldBlockMerge.mockReturnValue(false);
+
+        mockRunProviderCLI.mockResolvedValue('Just some markdown text without json tags.');
+
+        await flowReview(mockGh, 'o/r', 1, 'gemini', false);
+
+        expect(mockGh.createPullRequestReview).not.toHaveBeenCalled();
+        expect(mockGh.postComment).toHaveBeenCalledWith('o/r', 1, expect.stringContaining('Just some markdown text without json tags.'));
     });
 });
 
