@@ -20,7 +20,7 @@ export default {
     CLAUDE_MODEL: 'claude-3-5-sonnet-20241022',
 
     // Light Models (for routing, validation, summarization)
-    GEMINI_LIGHT_MODEL: 'gemini-1.5-flash',
+    GEMINI_LIGHT_MODEL: 'gemini-2.5-flash',
     CLAUDE_LIGHT_MODEL: 'claude-3-5-haiku-20241022',
 
     // Security Scanner
