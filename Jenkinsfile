@@ -185,7 +185,12 @@ pipeline {
             steps {
                 script {
                     def action         = env.GH_ACTION
-                    def prNumber       = env.GH_PR_NUMBER ?: env.GH_ISSUE_NUMBER
+                    def prRaw          = env.GH_PR_NUMBER ?: ''
+                    def issueRaw       = env.GH_ISSUE_NUMBER ?: ''
+                    // Generic Webhook Trigger returns '0' (not '') when a numeric JSONPath
+                    // (e.g. $.pull_request.number) is missing — '0' is truthy in Groovy,
+                    // so we must explicitly treat it as empty to allow fallback to issueRaw.
+                    def prNumber       = (prRaw == '0' || prRaw == '') ? issueRaw : prRaw
                     def containerName  = 'auto-review-bot-ci'
                     def useVolumeMount = env.DOCKER_USE_VOLUME_MOUNT == 'true'
 
