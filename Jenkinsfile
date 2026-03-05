@@ -158,6 +158,7 @@ pipeline {
                         writeFile file: "${env.WORKSPACE}/.creds/claude/.credentials.json", text: env.CLAUDE_JSON_CONFIG
                         writeFile file: "${env.WORKSPACE}/.creds/gemini/oauth_creds.json",  text: env.GEMINI_OAUTH_JSON
                         writeFile file: "${env.WORKSPACE}/.creds/gemini/settings.json",     text: env.GEMINI_SETTINGS_JSON
+                        sh "chmod -R 777 '${env.WORKSPACE}/.creds'"
                     } else {
                         // Native Docker strategy: flat files for docker cp
                         writeFile file: "${env.WORKSPACE}/.claude-credentials.json", text: env.CLAUDE_JSON_CONFIG
