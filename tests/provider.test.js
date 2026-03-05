@@ -301,6 +301,47 @@ describe('runProviderCLI — REPO_DIR env var', () => {
     });
 });
 
+// ─── Model Tiering (Routing) ───────────────────────────────────────────────
+
+describe('runProviderCLI — model tiering options', () => {
+    it('uses GEMINI_LIGHT_MODEL when tier is light', async () => {
+        mockSpawn.mockReturnValue(makeFakeProc([
+            JSON.stringify({ type: 'message', role: 'assistant', content: 'ok', delta: true }),
+        ]));
+        await runProviderCLI('gemini', 'prompt', { tier: 'light' });
+        expect(mockSpawn).toHaveBeenCalledWith(
+            'npx',
+            expect.arrayContaining(['--model', 'gemini-1.5-flash']), // from config.js fake / standard
+            expect.any(Object)
+        );
+    });
+
+    it('uses CLAUDE_LIGHT_MODEL when tier is light', async () => {
+        mockSpawn.mockReturnValue(makeFakeProc([
+            JSON.stringify({ type: 'result', subtype: 'success', result: 'hello' })
+        ]));
+        await runProviderCLI('claude', 'prompt', { tier: 'light' });
+        expect(mockSpawn).toHaveBeenCalledWith(
+            'npx',
+            expect.arrayContaining(['--model', 'claude-3-5-haiku-20241022']),
+            expect.any(Object)
+        );
+    });
+
+    it('uses default (heavy) model when tier is omitted or invalid', async () => {
+        mockSpawn.mockReturnValue(makeFakeProc([
+            JSON.stringify({ type: 'result', subtype: 'success', result: 'hello' })
+        ]));
+        // Should default to heavy
+        await runProviderCLI('claude', 'prompt', { tier: 'unrecognized' });
+        expect(mockSpawn).toHaveBeenCalledWith(
+            'npx',
+            expect.arrayContaining(['--model', 'claude-3-5-sonnet-20241022']),
+            expect.any(Object)
+        );
+    });
+});
+
 // ─── Gemini falsy content edge case ───────────────────────────────────────
 
 describe('runProviderCLI — Gemini falsy content guard', () => {

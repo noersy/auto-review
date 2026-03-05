@@ -15,8 +15,14 @@ export default {
     WEBHOOK_TOKEN: 'headless-agent-webhook',
 
     // LLM Models
+    // Heavy Models (for complex reasoning, bug finding, reviews)
     GEMINI_MODEL: 'gemini-3.1-pro-preview',
     // GEMINI_MODEL: 'gemini-2.5-pro',
+    CLAUDE_MODEL: 'claude-3-5-sonnet-20241022',
+
+    // Light Models (for routing, validation, summarization)
+    GEMINI_LIGHT_MODEL: 'gemini-1.5-flash',
+    CLAUDE_LIGHT_MODEL: 'claude-3-5-haiku-20241022',
 
     // Security Scanner
     SECURITY_SCAN_ENABLED: true,

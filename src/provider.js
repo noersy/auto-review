@@ -5,8 +5,18 @@ import config from './config.js';
 
 const CLI_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
-export async function runProviderCLI(provider, promptText) {
-    logger.info(`Executing ${provider.toUpperCase()} CLI...`);
+export async function runProviderCLI(provider, promptText, options = {}) {
+    // Determine target tier, default to 'heavy'
+    const tier = options.tier === 'light' ? 'light' : 'heavy';
+    logger.info(`Executing ${provider.toUpperCase()} CLI (Tier: ${tier})...`);
+
+    // Select the actual model string from config based on provider and tier
+    let targetModel;
+    if (provider === 'gemini') {
+        targetModel = tier === 'light' ? config.GEMINI_LIGHT_MODEL : config.GEMINI_MODEL;
+    } else {
+        targetModel = tier === 'light' ? config.CLAUDE_LIGHT_MODEL : config.CLAUDE_MODEL;
+    }
 
     const claudeArgs = [
         '--yes', '@anthropic-ai/claude-code', '-p', promptText,
@@ -14,6 +24,10 @@ export async function runProviderCLI(provider, promptText) {
         '--output-format', 'stream-json',
         '--verbose'
     ];
+    // Claude CLI supports --model if available
+    if (targetModel) {
+        claudeArgs.push('--model', targetModel);
+    }
 
     const repoDir = process.env.REPO_DIR ?? process.cwd();
     const geminiArgs = [
@@ -21,7 +35,7 @@ export async function runProviderCLI(provider, promptText) {
         '-y',
         '-o', 'stream-json',
         '--include-directories', repoDir,
-        '--model', config.GEMINI_MODEL
+        '--model', targetModel
     ];
 
     if (provider !== 'claude' && provider !== 'gemini') {

@@ -48,7 +48,7 @@ export async function flowReview(gh, repo, prNumber, provider, dryRun, options =
             Promise.all([
                 runProviderCLI(provider, buildReviewPrompt(prData.title, prData.additions, prData.deletions, targetBranch, repoDir)),
                 isPRBodyEmpty
-                    ? runProviderCLI(provider, buildSummaryPrompt(prData.title, targetBranch, repoDir))
+                    ? runProviderCLI(provider, buildSummaryPrompt(prData.title, targetBranch, repoDir), { tier: 'light' })
                     : Promise.resolve(null),
             ]),
         ]));
@@ -313,7 +313,7 @@ export async function flowAutoFix(gh, { repo, pr, provider, dryRun }) {
     // 1. Issue Validation Step
     logger.info('Validating issue context...');
     const validationPrompt = buildIssueValidationPrompt(issueData.title, issueData.body ?? '');
-    const validationResultRaw = await runProviderCLI(provider, validationPrompt);
+    const validationResultRaw = await runProviderCLI(provider, validationPrompt, { tier: 'light' });
 
     let validationResult;
     try {
@@ -490,7 +490,7 @@ export async function flowAutoFix(gh, { repo, pr, provider, dryRun }) {
     // Generate PR description from the changes made
     let prDescription = null;
     try {
-        prDescription = await runProviderCLI(provider, buildSummaryPrompt(`Fix: ${issueData.title}`, baseBranch, repoDir));
+        prDescription = await runProviderCLI(provider, buildSummaryPrompt(`Fix: ${issueData.title}`, baseBranch, repoDir), { tier: 'light' });
     } catch (err) {
         logger.warn(`Failed to generate PR description: ${err.message}`);
     }
