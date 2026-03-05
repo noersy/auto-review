@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Document Status | Draft |
-| Version | 1.3 |
+| Version | 1.4 |
 | Date | 2026-03-05 |
 | Author | Engineering Team |
 | Reviewer | — |
@@ -307,6 +307,15 @@ Security scan menggunakan `buildSecurityScanPrompt`. Output JSON yang diharapkan
 
 > Variabel dapat di-set via file `.env` di root project (menggunakan `dotenv`), atau sebagai environment variable di Jenkins build environment.
 
+### GitHub Token Required Scopes
+
+| Scope | Reason |
+|---|---|
+| `repo` | Read PR/Issue metadata, write comments, manage labels, create PRs |
+| `statuses` (atau `repo:status`) | Set commit status (security scan result) |
+
+> Minimal scope yang direkomendasikan: `repo` mencakup semua yang diperlukan. Jika menggunakan Fine-Grained Token, izin yang diperlukan: **Pull requests** (Read & Write), **Issues** (Read & Write), **Commit statuses** (Read & Write), **Contents** (Read).
+
 ---
 
 ## 12. Jenkins Job Configuration
@@ -421,28 +430,55 @@ Bot tidak memiliki dedicated metrics server. Observability dilakukan melalui:
 
 ---
 
-## 16. Key Design Decisions
+## 16. Known Limitations
 
-### 16.1 Idempotency
+| Limitation | Detail |
+|---|---|
+| Fork PR tidak didukung | Bot tidak dapat push ke branch di forked repository. `GITHUB_TOKEN` hanya memiliki akses ke repository utama. |
+| LLM context window | Diff yang sangat besar dapat melebihi context window model. Tidak ada chunking — LLM menerima seluruh diff sekaligus. |
+| LLM CLI harus terauthentikasi | Jika sesi Claude/Gemini CLI expired di CI, bot gagal tanpa pesan error yang jelas ke GitHub. |
+| Tidak ada support multi-repo | Satu Jenkins job menangani satu repository. Multi-repo memerlukan job terpisah. |
+| Tidak ada queue atau throttling | Jika banyak event masuk bersamaan, Jenkins menjalankan semua build secara concurrent (sesuai executor config). |
+
+---
+
+## 17. Concurrency Behavior
+
+Bot tidak memiliki mekanisme locking atau queue internal. Concurrency dikendalikan sepenuhnya oleh Jenkins executor configuration.
+
+| Scenario | Behavior |
+|---|---|
+| Dua PR dibuka bersamaan | Dua Jenkins build berjalan parallel — aman, karena setiap build bekerja pada PR yang berbeda. |
+| PR di-push dua kali cepat (double synchronize) | Dua build Flow A berjalan parallel untuk PR yang sama. Keduanya akan mencoba update komentar review yang sama. Salah satu akan menang — tidak ada data loss karena operasinya idempotent (update, bukan insert). |
+| Issue di-label auto-fix dua kali | Jika build pertama belum selesai create branch saat build kedua mulai, keduanya bisa membuat branch bersamaan. Idempotency check (open PR exists) dapat ter-bypass. Ini adalah **race condition yang diketahui**. |
+| Reply comment sangat cepat | Cooldown 60 detik di Flow B mencegah duplicate reply, tapi hanya efektif jika build selesai dalam 60 detik. |
+
+> **Rekomendasi:** Jika Jenkins executor > 1, pertimbangkan throttle concurrent builds di level job untuk Flow C (auto-fix) sebagai mitigasi race condition.
+
+---
+
+## 18. Key Design Decisions
+
+### 18.1 Idempotency
 
 - Flow A: Satu komentar review per PR. Bot mendeteksi komentar yang sudah ada via HTML marker dan melakukan update, bukan membuat komentar baru.
 - Flow C: Satu PR per issue. Eksekusi dihentikan jika branch `auto-fix/issue-N` sudah memiliki open PR.
 
-### 16.2 Dry-Run Mode
+### 18.2 Dry-Run Mode
 
 Tersedia di semua flow melalui flag `--dry-run`. Saat aktif, semua operasi write ke GitHub dan Git dinonaktifkan. LLM tetap dijalankan untuk keperluan validasi output.
 
-### 16.3 Sub-Issue Support
+### 18.3 Sub-Issue Support
 
 Flow C mendukung hierarki issue. Jika suatu issue adalah sub-issue dari issue lain, branch fix akan dibuat dari branch `auto-fix/issue-{parent}` (jika tersedia di remote), bukan dari default branch.
 
-### 16.4 Dual LLM Provider
+### 18.4 Dual LLM Provider
 
 Bot mendukung dua provider: Claude (default) dan Gemini. Provider dipilih via flag `--provider` saat pemanggilan. Provider dieksekusi sebagai CLI subprocess, bukan melalui API SDK.
 
 ---
 
-## 17. Error Handling Summary
+## 19. Error Handling Summary
 
 | Scenario | Behavior |
 |---|---|
@@ -457,7 +493,7 @@ Bot mendukung dua provider: Claude (default) dan Gemini. Provider dipilih via fl
 
 ---
 
-## 18. Open Questions
+## 20. Open Questions
 
 | # | Question | Owner | Due | Status |
 |---|---|---|---|---|
@@ -468,7 +504,7 @@ Bot mendukung dua provider: Claude (default) dan Gemini. Provider dipilih via fl
 
 ---
 
-## 19. Diagram Reference
+## 21. Diagram Reference
 
 | # | Diagram | File |
 |---|---|---|
@@ -483,17 +519,18 @@ Bot mendukung dua provider: Claude (default) dan Gemini. Provider dipilih via fl
 
 ---
 
-## 20. Revision History
+## 22. Revision History
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 1.0 | 2026-03-05 | Engineering Team | Initial draft |
 | 1.2 | 2026-03-05 | Engineering Team | Added Flow D diagram, SLA matrix, security scan format, observability, Flow C split, actionable open questions |
 | 1.3 | 2026-03-05 | Engineering Team | Added env vars, Jenkins job config, local dev guide, testing strategy, prompt context table, retry logic detail |
+| 1.4 | 2026-03-05 | Engineering Team | Added GitHub Token scopes, known limitations, concurrency behavior |
 
 ---
 
-## 21. Approval / Sign-off
+## 23. Approval / Sign-off
 
 | Role | Name | Status | Date |
 |---|---|---|---|
