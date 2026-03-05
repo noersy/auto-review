@@ -16,8 +16,7 @@ export default {
 
     // LLM Models
     // Heavy Models (for complex reasoning, bug finding, reviews)
-    GEMINI_MODEL: 'gemini-3.1-pro-preview',
-    // GEMINI_MODEL: 'gemini-2.5-pro',
+    GEMINI_MODEL: 'gemini-2.5-pro',
     CLAUDE_MODEL: 'claude-3-5-sonnet-20241022',
 
     // Light Models (for routing, validation, summarization)
