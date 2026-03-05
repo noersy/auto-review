@@ -74,12 +74,15 @@ pipeline {
                     env.GH_HEAD_BRANCH  = headBranch
                     env.GH_MERGED       = merged ? 'true' : 'false'
 
-                    def handled = (action in ['opened', 'synchronize', 'reopened', 'created', 'ready_for_review']) ||
-                                  (action == 'labeled' && labelName in ['auto-fix', 'auto-review']) ||
-                                  (action == 'closed'  && merged && headBranch)
+                    def isPrAction = action in ['opened', 'synchronize', 'reopened', 'ready_for_review']
+                    def handled = (isPrAction && prNum) ||
+                                  (action == 'created') ||
+                                  (action == 'labeled' && labelName == 'auto-fix') ||
+                                  (action == 'labeled' && labelName == 'auto-review' && prNum) ||
+                                  (action == 'closed'  && merged && headBranch && prNum)
 
                     if (!handled) {
-                        echo "Action '${action}' (label: '${labelName}') is not handled — aborting pipeline."
+                        echo "Action '${action}' (label: '${labelName}', PR: '${prNum}', Issue: '${issueNum}') is not handled — aborting pipeline."
                         currentBuild.result = 'NOT_BUILT'
                         error("Unhandled action — stopping early.")
                     }
