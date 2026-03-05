@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Document Status | Draft |
-| Version | 1.1 |
+| Version | 1.2 |
 | Date | 2026-03-05 |
 | Author | Engineering Team |
 | Reviewer | — |
@@ -35,6 +35,22 @@ Auto-Review Bot adalah sistem otomasi berbasis LLM yang diintegrasikan ke dalam 
 - Review terhadap PR yang mengubah lebih dari 5.500 baris kode (ditangani secara manual).
 - Integrasi dengan platform version control selain GitHub.
 - Deployment atau eksekusi kode yang dihasilkan LLM ke environment produksi.
+
+### Assumptions
+
+- LLM CLI (`claude` / `gemini`) tersedia dan terauthentikasi di environment CI.
+- GitHub webhook dikonfigurasi untuk mengirim event ke Jenkins Generic Webhook Trigger.
+- Repository menggunakan default branch sebagai target merge PR.
+
+### Dependencies
+
+| Dependency | Version / Notes |
+|---|---|
+| Node.js | Runtime eksekusi bot |
+| Octokit | GitHub REST API client |
+| Claude CLI | LLM provider default |
+| Gemini CLI | LLM provider alternatif |
+| Jenkins | Generic Webhook Trigger plugin |
 
 ---
 
@@ -121,9 +137,13 @@ Semua event masuk dari GitHub Webhook diarahkan berdasarkan kondisi berikut di `
 
 **Trigger:** Issue diberi label `auto-fix`.
 
-**Diagram 5 — Flow C: Auto Fix Issue**
+**Diagram 5a — Flow C (Part 1): Validation & Branch Setup**
 
-![Diagram 5 — Flow C: Auto Fix Issue](04_flow_c_autofix.png)
+![Diagram 5a — Flow C Part 1: Validation & Branch Setup](04a_flow_c1_validate.png)
+
+**Diagram 5b — Flow C (Part 2): LLM Fix & PR Creation**
+
+![Diagram 5b — Flow C Part 2: LLM Fix & PR Creation](04b_flow_c2_fix.png)
 
 **Steps:**
 
@@ -148,7 +168,11 @@ Semua event masuk dari GitHub Webhook diarahkan berdasarkan kondisi berikut di `
 
 **Trigger:** PR diberi label `auto-review`.
 
-**Description:** Memanggil `flowReview()` yang sama dengan Flow A. Digunakan untuk memicu ulang review secara on-demand tanpa memerlukan push commit baru.
+**Diagram 6 — Flow D: Manual Re-Review**
+
+![Diagram 6 — Flow D: Manual Re-Review](07_flow_d_rereview.png)
+
+**Description:** Label `auto-review` dihapus terlebih dahulu untuk mencegah re-trigger loop, kemudian memanggil `flowReview()` — identik dengan Flow A. Digunakan untuk memicu ulang review secara on-demand tanpa memerlukan push commit baru.
 
 ---
 
@@ -156,9 +180,9 @@ Semua event masuk dari GitHub Webhook diarahkan berdasarkan kondisi berikut di `
 
 **Trigger:** Pull Request di-merge (`action = closed`, `merged = true`).
 
-**Diagram 6 — Flow E: Auto Close Issue**
+**Diagram 7 — Flow E: Auto Close Issue**
 
-![Diagram 6 — Flow E: Auto Close Issue](05_flow_e_autoclose.png)
+![Diagram 7 — Flow E: Auto Close Issue](05_flow_e_autoclose.png)
 
 **Steps:**
 
@@ -168,7 +192,48 @@ Semua event masuk dari GitHub Webhook diarahkan berdasarkan kondisi berikut di `
 
 ---
 
-## 6. Supporting Modules
+## 6. SLA & Timeout Reference
+
+| Flow | LLM Calls (max) | Timeout per Call | Worst-Case Duration |
+|---|---|---|---|
+| A — PR Review | 3 (review + summary + security) | 10 menit | 30 menit |
+| B — Reply Comment | 1 | 10 menit | 10 menit |
+| C — Auto Fix Issue | 4 (validate + fix + retry + summary) | 10 menit | 40 menit |
+| D — Manual Re-Review | Sama dengan Flow A | — | 30 menit |
+| E — Auto Close Issue | 0 | — | < 5 detik |
+
+> LLM calls yang gagal karena timeout dikomunikasikan sebagai komentar ke PR/Issue. Tidak ada automatic retry di level flow — retry hanya ada di level GitHub API (HTTP 429/5xx).
+
+---
+
+## 7. Security Scan Output Format
+
+Security scan menggunakan `buildSecurityScanPrompt` dan mengharapkan output JSON dari LLM dengan struktur berikut:
+
+```json
+{
+  "riskLevel": "critical | high | medium | low | clean",
+  "findings": [
+    {
+      "severity": "critical | high | medium | low",
+      "file": "path/to/file.js",
+      "line": 42,
+      "description": "Hardcoded secret detected"
+    }
+  ],
+  "summary": "Brief overall assessment"
+}
+```
+
+`security.js` mem-parse output ini untuk menentukan tindakan selanjutnya:
+
+- `critical` / `high` → label `security-risk` + commit status `failure`
+- `medium` / `low` → hapus label `security-risk` + commit status `success` + post findings
+- `clean` → hapus label `security-risk` + commit status `success`, tidak ada komentar
+
+---
+
+## 8. Supporting Modules
 
 | Module | Responsibility |
 |---|---|
@@ -183,7 +248,7 @@ Semua event masuk dari GitHub Webhook diarahkan berdasarkan kondisi berikut di `
 
 ---
 
-## 7. Configuration Reference
+## 9. Configuration Reference
 
 | Parameter | Value | Description |
 |---|---|---|
@@ -200,28 +265,44 @@ Semua event masuk dari GitHub Webhook diarahkan berdasarkan kondisi berikut di `
 
 ---
 
-## 8. Key Design Decisions
+## 10. Observability
 
-### 8.1 Idempotency
+Bot tidak memiliki dedicated metrics server. Observability dilakukan melalui:
+
+| Signal | Mechanism |
+|---|---|
+| Execution log | `console.log` / `console.error` — tersedia di Jenkins build log |
+| Flow failure | Komentar error dipost ke PR / Issue secara otomatis |
+| LLM timeout | Komentar timeout dipost ke PR / Issue |
+| Security findings | Komentar dan commit status di GitHub |
+| Silent failure detection | Tidak ada. Jika Jenkins job tidak dipicu (webhook misconfiguration), tidak ada alert otomatis. |
+
+> **Gap yang diketahui:** Tidak ada alerting jika webhook dari GitHub gagal diterima Jenkins. Bot diam tanpa indikasi kegagalan.
+
+---
+
+## 11. Key Design Decisions
+
+### 11.1 Idempotency
 
 - Flow A: Satu komentar review per PR. Bot mendeteksi komentar yang sudah ada via HTML marker dan melakukan update, bukan membuat komentar baru.
 - Flow C: Satu PR per issue. Eksekusi dihentikan jika branch `auto-fix/issue-N` sudah memiliki open PR.
 
-### 8.2 Dry-Run Mode
+### 11.2 Dry-Run Mode
 
 Tersedia di semua flow melalui flag `--dry-run`. Saat aktif, semua operasi write ke GitHub dan Git dinonaktifkan. LLM tetap dijalankan untuk keperluan validasi output.
 
-### 8.3 Sub-Issue Support
+### 11.3 Sub-Issue Support
 
 Flow C mendukung hierarki issue. Jika suatu issue adalah sub-issue dari issue lain, branch fix akan dibuat dari branch `auto-fix/issue-{parent}` (jika tersedia di remote), bukan dari default branch.
 
-### 8.4 Dual LLM Provider
+### 11.4 Dual LLM Provider
 
 Bot mendukung dua provider: Claude (default) dan Gemini. Provider dipilih via flag `--provider` saat pemanggilan. Provider dieksekusi sebagai CLI subprocess, bukan melalui API SDK.
 
 ---
 
-## 9. Error Handling Summary
+## 12. Error Handling Summary
 
 | Scenario | Behavior |
 |---|---|
@@ -236,17 +317,18 @@ Bot mendukung dua provider: Claude (default) dan Gemini. Provider dipilih via fl
 
 ---
 
-## 10. Open Questions
+## 13. Open Questions
 
-| # | Question | Owner | Status |
-|---|---|---|---|
-| 1 | Apakah threshold 5.500 baris sudah optimal untuk semua jenis repository di organisasi? | Engineering | Open |
-| 2 | Model LLM mana yang memberikan hasil review lebih akurat untuk codebase yang ada? | Engineering | Open |
-| 3 | Apakah perlu mekanisme approval sebelum PR auto-fix di-merge? | Engineering / Product | Open |
+| # | Question | Owner | Due | Status |
+|---|---|---|---|---|
+| 1 | Apakah threshold 5.500 baris sudah optimal untuk semua repository di organisasi? | Backend Lead | 2026-03-12 | Open |
+| 2 | Model LLM mana yang lebih akurat untuk codebase yang ada — perlu A/B test minimal 50 PR? | Backend Lead | 2026-03-19 | Open |
+| 3 | Apakah perlu approval gate sebelum PR auto-fix di-merge ke branch utama? | Engineering + Product | 2026-03-12 | Open |
+| 4 | Bagaimana mendeteksi silent failure jika Jenkins tidak menerima webhook? | DevOps | 2026-03-19 | Open |
 
 ---
 
-## 11. Diagram Reference
+## 14. Diagram Reference
 
 | # | Diagram | File |
 |---|---|---|
@@ -254,14 +336,26 @@ Bot mendukung dua provider: Claude (default) dan Gemini. Provider dipilih via fl
 | 2 | Flow Routing | `01_flow_routing.png` |
 | 3 | Flow A: PR Review | `02_flow_a_review.png` |
 | 4 | Flow B: Reply Comment | `03_flow_b_reply.png` |
-| 5 | Flow C: Auto Fix Issue | `04_flow_c_autofix.png` |
-| 6 | Flow E: Auto Close Issue | `05_flow_e_autoclose.png` |
+| 5a | Flow C (Part 1): Validation & Branch Setup | `04a_flow_c1_validate.png` |
+| 5b | Flow C (Part 2): LLM Fix & PR Creation | `04b_flow_c2_fix.png` |
+| 6 | Flow D: Manual Re-Review | `07_flow_d_rereview.png` |
+| 7 | Flow E: Auto Close Issue | `05_flow_e_autoclose.png` |
 
 ---
 
-## 12. Revision History
+## 15. Revision History
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 1.0 | 2026-03-05 | Engineering Team | Initial draft |
-| 1.1 | 2026-03-05 | Engineering Team | Added flow diagrams and architecture diagram |
+| 1.2 | 2026-03-05 | Engineering Team | Added Flow D diagram, SLA matrix, security scan output format, observability section, Flow C split into two diagrams, actionable open questions |
+
+---
+
+## 16. Approval / Sign-off
+
+| Role | Name | Status | Date |
+|---|---|---|---|
+| Author | — | Draft | 2026-03-05 |
+| Engineering Lead | — | Pending | — |
+| Product Owner | — | Pending | — |
