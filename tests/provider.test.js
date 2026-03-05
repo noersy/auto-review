@@ -243,3 +243,73 @@ describe('runProviderCLI — Claude stream-json parsing', () => {
         expect(await runProviderCLI('claude', 'prompt')).toBe('Output');
     });
 });
+
+// ─── Timeout ───────────────────────────────────────────────────────────────
+
+describe('runProviderCLI — timeout', () => {
+    it('rejects when CLI times out', async () => {
+        jest.useFakeTimers();
+
+        const proc = new EventEmitter();
+        proc.pid = 999;
+        proc.stdout = new PassThrough();
+        proc.stderr = new PassThrough();
+        mockSpawn.mockReturnValue(proc);
+
+        const promise = runProviderCLI('gemini', 'prompt');
+
+        // Advance past the 30-minute timeout
+        jest.advanceTimersByTime(31 * 60 * 1000);
+
+        await expect(promise).rejects.toThrow('timed out after 30 minutes');
+        jest.useRealTimers();
+    });
+});
+
+// ─── Stderr tail in error ──────────────────────────────────────────────────
+
+describe('runProviderCLI — stderr tail in "no result" error', () => {
+    it('includes last stderr lines in error message when no result found', async () => {
+        mockSpawn.mockReturnValue(makeFakeProc([], 'line1\nline2\nfinalLine', 0));
+        await expect(runProviderCLI('gemini', 'prompt')).rejects.toThrow('finalLine');
+    });
+
+    it('shows "(empty)" when stderr was empty and no result found', async () => {
+        mockSpawn.mockReturnValue(makeFakeProc([], '', 0));
+        await expect(runProviderCLI('gemini', 'prompt')).rejects.toThrow('(empty)');
+    });
+});
+
+// ─── REPO_DIR spawn args ───────────────────────────────────────────────────
+
+describe('runProviderCLI — REPO_DIR env var', () => {
+    it('passes REPO_DIR to gemini spawn cwd and --include-directories', async () => {
+        process.env.REPO_DIR = '/custom/repo';
+        mockSpawn.mockReturnValue(makeFakeProc([
+            JSON.stringify({ type: 'message', role: 'assistant', content: 'ok', delta: true }),
+        ]));
+
+        await runProviderCLI('gemini', 'prompt');
+
+        expect(mockSpawn).toHaveBeenCalledWith(
+            'npx',
+            expect.arrayContaining(['--include-directories', '/custom/repo']),
+            expect.objectContaining({ cwd: '/custom/repo' })
+        );
+
+        delete process.env.REPO_DIR;
+    });
+});
+
+// ─── Gemini falsy content edge case ───────────────────────────────────────
+
+describe('runProviderCLI — Gemini falsy content guard', () => {
+    it('does not accumulate content when value is 0 (falsy)', async () => {
+        const lines = [
+            JSON.stringify({ type: 'message', role: 'assistant', content: 0, delta: true }),
+            JSON.stringify({ type: 'message', role: 'assistant', content: 'valid', delta: true }),
+        ];
+        mockSpawn.mockReturnValue(makeFakeProc(lines));
+        expect(await runProviderCLI('gemini', 'prompt')).toBe('valid');
+    });
+});
