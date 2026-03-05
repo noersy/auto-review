@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Document Status | Draft |
-| Version | 1.4 |
+| Version | 1.5 |
 | Date | 2026-03-05 |
 | Author | Engineering Team |
 | Reviewer | — |
@@ -519,7 +519,27 @@ Bot mendukung dua provider: Claude (default) dan Gemini. Provider dipilih via fl
 
 ---
 
-## 22. Revision History
+## 22. Glossary
+
+| Term | Definition |
+|---|---|
+| **LLM** | Large Language Model. Model AI yang dapat menghasilkan dan menganalisis teks, digunakan untuk review kode, menulis fix, dan menjawab pertanyaan. |
+| **PR** | Pull Request. Mekanisme GitHub untuk mengajukan perubahan kode dari satu branch ke branch lain. |
+| **Issue** | GitHub Issue. Digunakan untuk melaporkan bug atau mendeskripsikan feature request. |
+| **Generic Webhook Trigger** | Plugin Jenkins yang memungkinkan job dipicu melalui HTTP POST request dengan payload JSON yang dikonfigurasi via JSONPath. |
+| **Idempotency** | Sifat operasi di mana menjalankan operasi yang sama lebih dari sekali menghasilkan hasil yang sama, tanpa efek samping tambahan. |
+| **Dry-run** | Mode eksekusi di mana semua operasi yang bersifat write (ke GitHub dan Git) dinonaktifkan. LLM tetap dipanggil. |
+| **Rate limiting** | Pembatasan frekuensi request atau aksi untuk mencegah overload sistem. |
+| **Backoff** | Strategi retry di mana waktu tunggu antar percobaan diperpanjang secara bertahap untuk mengurangi beban pada sistem yang sedang bermasalah. |
+| **Context window** | Batas maksimum teks (dalam token) yang dapat diproses oleh model LLM dalam satu request. |
+| **Commit status** | Indikator pass/fail yang ditampilkan di GitHub pada commit atau PR, digunakan untuk memberi sinyal hasil security scan. |
+| **Octokit** | Library resmi GitHub untuk berinteraksi dengan GitHub REST API menggunakan JavaScript/Node.js. |
+| **Sub-issue** | Issue yang merupakan turunan dari issue lain, menggunakan fitur GitHub issue hierarchy. |
+| **PDR** | Process Design Review. Dokumen teknikal yang mendeskripsikan desain, spesifikasi, dan keputusan implementasi suatu sistem. |
+
+---
+
+## 23. Revision History
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
@@ -527,10 +547,11 @@ Bot mendukung dua provider: Claude (default) dan Gemini. Provider dipilih via fl
 | 1.2 | 2026-03-05 | Engineering Team | Added Flow D diagram, SLA matrix, security scan format, observability, Flow C split, actionable open questions |
 | 1.3 | 2026-03-05 | Engineering Team | Added env vars, Jenkins job config, local dev guide, testing strategy, prompt context table, retry logic detail |
 | 1.4 | 2026-03-05 | Engineering Team | Added GitHub Token scopes, known limitations, concurrency behavior |
+| 1.5 | 2026-03-05 | Engineering Team | Added Glossary |
 
 ---
 
-## 23. Approval / Sign-off
+## 24. Approval / Sign-off
 
 | Role | Name | Status | Date |
 |---|---|---|---|
