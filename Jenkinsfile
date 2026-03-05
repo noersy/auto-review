@@ -276,7 +276,7 @@ pipeline {
                                         git -C /repo remote set-url origin https://x-access-token:${env.GITHUB_TOKEN}@github.com/${env.GH_REPO}.git
                                         git -C /repo fetch origin
                                         git -C /repo reset --hard HEAD
-                                        git -C /repo clean -fd
+                                        git -C /repo clean -fd -e .creds/ -e .bot-comment-body.txt
                                         git -C /repo remote set-head origin -a
                                         DEFAULT_BRANCH=\$(git -C /repo symbolic-ref refs/remotes/origin/HEAD | cut -d/ -f4)
                                         git -C /repo checkout -B \$DEFAULT_BRANCH origin/\$DEFAULT_BRANCH
