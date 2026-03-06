@@ -167,6 +167,9 @@ async function runE2E() {
 
         // --- FLOW 3: Auto-Fix ---
         console.log(`\n--- FLOW 3: Auto-Fix ---`);
+        console.log(`🔀 Merging e2e test PR #${prNumber} to master before Auto-Fix so the target file exists...`);
+        await octokit.pulls.merge({ owner, repo, pull_number: prNumber });
+
         console.log(`🐛 Creating Issue asking for fix...`);
         const { data: issueData } = await octokit.issues.create({
             owner, repo, title: `Bug: Fix global variable in ${fileName}`,
