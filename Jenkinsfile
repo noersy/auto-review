@@ -19,7 +19,7 @@ pipeline {
                 [key: 'GH_HEAD_BRANCH',  value: '$.pull_request.head.ref', defaultValue: ''],
                 [key: 'GH_PROVIDER',     value: '$.provider',              defaultValue: 'claude']
             ],
-            token: 'headless-agent-webhook',
+            token: 'new-headless-agent-webhook',
             causeString: 'PR Event from $GH_REPO using Provider $GH_PROVIDER',
             printContributedVariables: true,
             printPostContent: false

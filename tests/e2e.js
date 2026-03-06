@@ -6,7 +6,7 @@ import crypto from 'crypto';
 const REPO = process.env.E2E_REPO || 'noersy/auto-review-sandbox';
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const JENKINS_URL = process.env.JENKINS_URL || 'http://localhost:8080';
-const JENKINS_TOKEN = process.env.JENKINS_TOKEN || 'headless-agent-webhook';
+const JENKINS_TOKEN = process.env.JENKINS_TOKEN || 'new-headless-agent-webhook';
 const PROVIDER = process.env.E2E_PROVIDER || 'gemini';
 const BOT_USERNAME = process.env.E2E_BOT_USERNAME || 'fei-reviewer';
 
