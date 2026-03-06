@@ -504,16 +504,8 @@ export async function flowAutoFix(gh, { repo, pr, provider, dryRun }) {
         }
     }
 
-    // Generate PR description from the changes made
-    let prDescription = null;
-    try {
-        prDescription = await runProviderCLI(provider, buildSummaryPrompt(`Fix: ${issueData.title}`, baseBranch, repoDir), { tier: 'light' });
-    } catch (err) {
-        logger.warn(`Failed to generate PR description: ${err.message}`);
-    }
-
-    // Check for changes and commit
-    const changedFiles = getChangedFiles();
+    // Check for changes — reuse firstAttemptFiles if non-empty, otherwise re-check after retry
+    const changedFiles = firstAttemptFiles.length > 0 ? firstAttemptFiles : getChangedFiles();
     if (changedFiles === null) {
         logger.error('getChangedFiles() failed (git error) before commit — aborting.');
         if (!dryRun) {
@@ -548,6 +540,14 @@ export async function flowAutoFix(gh, { repo, pr, provider, dryRun }) {
         }
         logger.info('No changes made by LLM.');
         return;
+    }
+
+    // Generate PR description from the changes made (after confirming changes exist)
+    let prDescription = null;
+    try {
+        prDescription = await runProviderCLI(provider, buildSummaryPrompt(`Fix: ${issueData.title}`, baseBranch, repoDir), { tier: 'light' });
+    } catch (err) {
+        logger.warn(`Failed to generate PR description: ${err.message}`);
     }
 
     const commitMsg = `Fix: ${issueData.title} (Resolves #${pr})`;

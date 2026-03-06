@@ -537,16 +537,16 @@ describe('flowAutoFix', () => {
         expect(mockGh.postComment).not.toHaveBeenCalled();
     });
 
-    it('posts error when second getChangedFiles returns null (git error before commit)', async () => {
-        // First LLM attempt produces changes (skips retry),
-        // but git status fails right before the commit step.
+    it('posts error when getChangedFiles returns null after retry (git error before commit)', async () => {
+        // First LLM attempt produces no changes → retry runs.
+        // After retry, getChangedFiles returns null (git error).
         mockRunProviderCLI
             .mockResolvedValueOnce(validOk)       // validation
-            .mockResolvedValueOnce('fix code')    // fix
-            .mockResolvedValueOnce('summary');    // PR description
+            .mockResolvedValueOnce('fix code')    // fix (no changes on first attempt)
+            .mockResolvedValueOnce('retry fix');   // retry
         mockGetChangedFiles
-            .mockReturnValueOnce(['src/fix.js'])  // first check: has changes → skip retry
-            .mockReturnValueOnce(null);           // second check: git error before commit
+            .mockReturnValueOnce([])              // first check: no changes → triggers retry
+            .mockReturnValueOnce(null);           // second check (after retry): git error
         await flowAutoFix(mockGh, { repo: 'o/r', pr: 7, provider: 'gemini', dryRun: false });
         expect(mockGh.postComment).toHaveBeenCalledWith('o/r', 7, expect.stringContaining('Gagal'));
         expect(mockCommitAndPush).not.toHaveBeenCalled();

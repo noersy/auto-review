@@ -51,13 +51,16 @@ DO NOT ask for confirmation. Just answer directly.`;
 export function buildSummaryPrompt(prTitle, targetBranch, repoDir) {
   return `You are an expert Principal Software Engineer.
 I have checked out a Pull Request branch titled "${prTitle}".
-The repository is located at ${repoDir}. Inspect the changes using \`git diff origin/${targetBranch}...\` inside ${repoDir}.
+The repository is located at ${repoDir}.
+Inspect the changes using \`git diff origin/${targetBranch}...\` inside ${repoDir}.
+If \`git diff\` returns empty output, use \`git status\` and read the changed/untracked files directly to understand the changes.
 
 Write a concise Pull Request description in Markdown that includes:
 1. A short paragraph summarizing what this PR does and why.
 2. A bullet list of the key changes.
 
 Keep it factual and brief. Do not include review feedback or opinions.
+STRICTLY FORBIDDEN: Do NOT run \`git add\`, \`git commit\`, or \`git push\`. You are only allowed to READ and INSPECT files.
 DO NOT ask for confirmation. Return the description text directly.`;
 }
 
@@ -75,6 +78,7 @@ ${issueBody}
 Your task is to fix this issue directly in the codebase.
 The repository is located at ${repoDir}.
 Please analyze the issue, locate the files that need to be changed, and modify them to resolve the issue.
+STRICTLY FORBIDDEN: Do NOT run \`git add\`, \`git commit\`, or \`git push\`. Only edit files — the system will handle Git operations.
 DO NOT ask for confirmation. Just edit the files directly.`;
 }
 
@@ -94,6 +98,7 @@ This is a second attempt. Be more thorough:
 2. Make reasonable assumptions if the issue is vague, and implement a fix anyway.
 3. You MUST make at least one meaningful code change to address the issue.
 
+STRICTLY FORBIDDEN: Do NOT run \`git add\`, \`git commit\`, or \`git push\`. Only edit files — the system will handle Git operations.
 DO NOT ask for confirmation. Edit the files directly.`;
 }
 
