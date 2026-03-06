@@ -52,13 +52,17 @@ describe('getChangedFiles', () => {
         expect(files).toContain('src/b.js');
     });
 
-    it('skips credential files', () => {
-        const output = ' M .claude-credentials.json\0 M .gemini-credentials.json\0 M .gemini-settings.json\0 M src/real.js\0';
+    it('skips temporary and credential files', () => {
+        const output = ' M .claude-credentials.json\0 M .gemini-credentials.json\0 M .gemini-settings.json\0?? .creds/foo.json\0 M .bot-comment-body.txt\0 A pr_description.md\0?? test-file-1234abcd.js\0 M src/real.js\0';
         spawnSync.mockReturnValue({ status: 0, stdout: Buffer.from(output), stderr: null });
         const files = getChangedFiles();
         expect(files).not.toContain('.claude-credentials.json');
         expect(files).not.toContain('.gemini-credentials.json');
         expect(files).not.toContain('.gemini-settings.json');
+        expect(files).not.toContain('.creds/foo.json');
+        expect(files).not.toContain('.bot-comment-body.txt');
+        expect(files).not.toContain('pr_description.md');
+        expect(files).not.toContain('test-file-1234abcd.js');
         expect(files).toContain('src/real.js');
     });
 

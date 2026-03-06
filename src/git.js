@@ -2,10 +2,14 @@ import { spawnSync } from 'child_process';
 import { logger } from './logger.js';
 
 const REPO_DIR = process.env.REPO_DIR ?? process.cwd();
-const CREDENTIAL_FILES = [
-    '.claude-credentials.json',
-    '.gemini-credentials.json',
-    '.gemini-settings.json',
+const IGNORED_TEMP_PATTERNS = [
+    /^\.claude-credentials\.json$/,
+    /^\.gemini-credentials\.json$/,
+    /^\.gemini-settings\.json$/,
+    /^\.bot-comment-body\.txt$/,
+    /^pr_description\.md$/,
+    /^\.creds\//,
+    /^test-file-[a-f0-9]+\.js$/
 ];
 
 /**
@@ -69,7 +73,10 @@ export function getChangedFiles() {
         if (entry.length <= 3) continue;
         const xy = entry.slice(0, 2);
         const file = entry.slice(3);
-        if (!CREDENTIAL_FILES.includes(file)) files.push(file);
+
+        const isIgnored = IGNORED_TEMP_PATTERNS.some(pattern => pattern.test(file));
+        if (!isIgnored) files.push(file);
+
         // R (rename) and C (copy) are followed by the original path as a separate entry
         if (xy[0] === 'R' || xy[0] === 'C' || xy[1] === 'R' || xy[1] === 'C') skipNext = true;
     }
