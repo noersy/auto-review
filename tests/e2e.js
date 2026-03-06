@@ -126,8 +126,9 @@ async function runE2E() {
             owner, repo, issue_number: prNumber, body: userComment
         });
 
-        // Record time just before triggering so we can detect NEW bot comments after it
-        const replyTriggerTime = new Date();
+        // Record existing comment IDs before triggering so we can detect NEW bot comments after it
+        const { data: initialComments } = await octokit.issues.listComments({ owner, repo, issue_number: prNumber });
+        const existingCommentIds = new Set(initialComments.map(c => c.id));
 
         // Trigger Reply
         await triggerJenkins({
@@ -144,13 +145,13 @@ async function runE2E() {
             const { data: comments } = await safeApiCall(() =>
                 octokit.issues.listComments({ owner, repo, issue_number: prNumber })
             );
-            // Look for any comment from the bot posted AFTER we triggered the reply.
+            // Look for any NEW comment from the bot.
             // Exclude:
             //   - review comments (marked with <!-- auto-review-bot -->)
             //   - security scan comments (marked with <!-- auto-review-security -->)
             const botReply = comments.find(c =>
                 c.user.login === BOT_USERNAME &&
-                new Date(c.created_at) > replyTriggerTime &&
+                !existingCommentIds.has(c.id) &&
                 !c.body.includes('<!-- auto-review-bot -->') &&
                 !c.body.includes('<!-- auto-review-security -->')
             );
