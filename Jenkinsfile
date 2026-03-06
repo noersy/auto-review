@@ -22,7 +22,7 @@ pipeline {
             token: 'headless-agent-webhook',
             causeString: 'PR Event from $GH_REPO using Provider $GH_PROVIDER',
             printContributedVariables: true,
-            printPostContent: false
+            printPostContent: false,
         )
     }
 
