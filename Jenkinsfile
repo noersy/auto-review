@@ -331,6 +331,7 @@ pipeline {
                                 -e GITHUB_TOKEN="${env.GITHUB_TOKEN}" \\
                                 -e CI=true \\
                                 -e GOOGLE_GENAI_USE_GCA=true \\
+                                -e REPO_DIR=/repo \\
                                 ${containerName} \\
                                 node /app/src/index.js \\
                                 --action "${action}" \\
