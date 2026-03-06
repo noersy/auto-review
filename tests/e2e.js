@@ -260,8 +260,21 @@ async function runE2E() {
                 await octokit.git.deleteRef({ owner, repo, ref: `heads/auto-fix/issue-${issueNumber}` });
             } catch (e) { }
         }
-        console.log(`✅ Cleanup complete.`);
     }
+    // Cleanup the test file from master if it was merged
+    try {
+        const path = `test-file-${runId}.js`;
+        const { data: fileData } = await octokit.repos.getContent({ owner, repo, path, ref: 'master' });
+        if (fileData && fileData.sha) {
+            await octokit.repos.deleteFile({
+                owner, repo, path,
+                message: `chore: cleanup test file ${path}`,
+                sha: fileData.sha,
+                branch: 'master'
+            });
+        }
+    } catch (e) { }
+    console.log(`✅ Cleanup complete.`);
 }
 
 runE2E();
