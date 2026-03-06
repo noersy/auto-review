@@ -20,7 +20,7 @@ export default {
     ],
 
     // Jenkins
-    WEBHOOK_TOKEN: 'headless-agent-webhook',
+    WEBHOOK_TOKEN: 'new-headless-agent-webhook',
 
     // LLM Models
     // Heavy Models (for complex reasoning, bug finding, reviews)
