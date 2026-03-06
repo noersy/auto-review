@@ -131,15 +131,17 @@ pipeline {
                 script {
                     def prNumber = env.GH_PR_NUMBER
                     echo "Checking out ${env.GH_REPO} PR #${prNumber}..."
-                    checkout([
-                        $class: 'GitSCM',
-                        branches: [[name: "origin/pr/${prNumber}/merge"]],
-                        userRemoteConfigs: [[
-                            url: "https://x-access-token:${env.GITHUB_TOKEN}@github.com/${env.GH_REPO}.git",
-                            refspec: "+refs/pull/${prNumber}/merge:refs/remotes/origin/pr/${prNumber}/merge +refs/heads/*:refs/remotes/origin/*"
-                        ]],
-                        extensions: [[$class: 'CleanBeforeCheckout']]
-                    ])
+                    dir('target-repo') {
+                        checkout([
+                            $class: 'GitSCM',
+                            branches: [[name: "origin/pr/${prNumber}/merge"]],
+                            userRemoteConfigs: [[
+                                url: "https://x-access-token:${env.GITHUB_TOKEN}@github.com/${env.GH_REPO}.git",
+                                refspec: "+refs/pull/${prNumber}/merge:refs/remotes/origin/pr/${prNumber}/merge +refs/heads/*:refs/remotes/origin/*"
+                            ]],
+                            extensions: [[$class: 'CleanBeforeCheckout']]
+                        ])
+                    }
                 }
             }
         }
@@ -201,6 +203,8 @@ pipeline {
                         sh "rm -rf '${commentBodyFile}'"
                         writeFile file: commentBodyFile, text: env.GH_COMMENT_BODY ?: ''
 
+                        sh "mkdir -p '${env.WORKSPACE}/target-repo'"
+
                         // Always start fresh; wait for any in-progress removal to finish
                         sh "docker rm -f ${containerName} 2>/dev/null || true"
                         sh "timeout 15 bash -c 'while docker inspect ${containerName} >/dev/null 2>&1; do sleep 1; done' || true"
@@ -219,7 +223,7 @@ pipeline {
                                     --memory-reservation=600m \\
                                     -e CI=true \\
                                     -e GOOGLE_GENAI_USE_GCA=true \\
-                                    -v "${env.HOST_WORKSPACE}:/repo:rw" \\
+                                    -v "${env.HOST_WORKSPACE}/target-repo:/repo:rw" \\
                                     -v "${env.HOST_WORKSPACE}/.creds/claude:/home/botuser/.claude:rw" \\
                                     -v "${env.HOST_WORKSPACE}/.creds/gemini:/home/botuser/.gemini:rw" \\
                                     auto-review-bot:ci sleep infinity
@@ -233,7 +237,7 @@ pipeline {
                                     --memory-reservation=600m \\
                                     -e CI=true \\
                                     -e GOOGLE_GENAI_USE_GCA=true \\
-                                    -v "${env.HOST_WORKSPACE}:/repo:rw" \\
+                                    -v "${env.HOST_WORKSPACE}/target-repo:/repo:rw" \\
                                     auto-review-bot:ci sleep infinity
                             """
                         }
@@ -249,9 +253,10 @@ pipeline {
                         """
 
                         if (useVolumeMount) {
-                            // Comment body is in /repo (HOST_WORKSPACE mounted as /repo).
-                            // Copy it to /home/botuser/ via docker exec to set correct ownership.
-                            sh "docker exec --user root ${containerName} bash -c 'cp /repo/.bot-comment-body.txt /home/botuser/.bot-comment-body.txt && chown botuser:botuser /home/botuser/.bot-comment-body.txt'"
+                            sh """
+                                docker cp "${commentBodyFile}" ${containerName}:/home/botuser/.bot-comment-body.txt
+                                docker exec --user root ${containerName} chown botuser:botuser /home/botuser/.bot-comment-body.txt
+                            """
                         } else {
                             // Native Docker: inject credentials and comment body via docker cp
                             sh """
@@ -282,7 +287,7 @@ pipeline {
                                         git -C /repo remote set-url origin https://x-access-token:${env.GITHUB_TOKEN}@github.com/${env.GH_REPO}.git
                                         git -C /repo fetch origin
                                         git -C /repo reset --hard HEAD
-                                        git -C /repo clean -fd -e .creds/ -e .bot-comment-body.txt
+                                        git -C /repo clean -fd
                                         git -C /repo remote set-head origin -a
                                         DEFAULT_BRANCH=\$(git -C /repo symbolic-ref refs/remotes/origin/HEAD | cut -d/ -f4)
                                         git -C /repo checkout -B \$DEFAULT_BRANCH origin/\$DEFAULT_BRANCH
@@ -398,7 +403,7 @@ pipeline {
     post {
         always {
             sh "docker rm -f auto-review-bot-ci 2>/dev/null || true"
-            sh "rm -rf '${env.WORKSPACE}/agent-credentials' '${env.WORKSPACE}/.creds' '${env.WORKSPACE}/.bot-comment-body.txt' 2>/dev/null || true"
+            sh "rm -rf '${env.WORKSPACE}/agent-credentials' '${env.WORKSPACE}/.creds' '${env.WORKSPACE}/.bot-comment-body.txt' '${env.WORKSPACE}/target-repo' 2>/dev/null || true"
             sh "rm -f '${env.WORKSPACE}/.claude-credentials.json' '${env.WORKSPACE}/.gemini-credentials.json' '${env.WORKSPACE}/.gemini-settings.json' '${env.WORKSPACE}/.updated-claude.json' '${env.WORKSPACE}/.updated-gemini.json' '${env.WORKSPACE}/.updated-settings.json' 2>/dev/null || true"
         }
         failure {
