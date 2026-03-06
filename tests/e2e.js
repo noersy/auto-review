@@ -64,6 +64,7 @@ async function runE2E() {
     const runId = crypto.randomBytes(4).toString('hex');
     let prNumber = null;
     let issueNumber = null;
+    let fixPrNumber = null;
     let branchName = `e2e-test/${runId}`;
 
     try {
@@ -189,7 +190,7 @@ async function runE2E() {
         });
 
         console.log(`⏳ Waiting for bot to create PR for issue #${issueNumber} (Timeout: 10 mins)...`);
-        let fixPrNumber = null;
+        fixPrNumber = null;
         for (let i = 0; i < 120; i++) { // Auto-fix takes longer
             await sleep(5000);
             const { data: pulls } = await safeApiCall(() =>
@@ -243,6 +244,9 @@ async function runE2E() {
         console.log(`\n🧹 Cleaning up Sandbox Repo...`);
         try {
             if (prNumber) await octokit.pulls.update({ owner, repo, pull_number: prNumber, state: 'closed' });
+        } catch (e) { }
+        try {
+            if (fixPrNumber) await octokit.pulls.update({ owner, repo, pull_number: fixPrNumber, state: 'closed' });
         } catch (e) { }
         try {
             if (issueNumber) await octokit.issues.update({ owner, repo, issue_number: issueNumber, state: 'closed' });
