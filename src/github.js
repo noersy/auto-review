@@ -134,8 +134,14 @@ export class GitHubClient {
             `LIST comments #${issueNumber}`
         );
         const botComments = comments.filter(c => c.user.login === config.BOT_USERNAME);
-        const lastBotReplyTime = botComments.length === 0 ? 0 : Math.max(
-            ...botComments.map(c => Math.max(
+        // For cooldown purposes, only count actual reply comments — NOT review or security
+        // comments which are identified by their HTML marker tags.
+        const botReplies = botComments.filter(c =>
+            !c.body.includes('<!-- auto-review-bot -->') &&
+            !c.body.includes('<!-- auto-review-security -->')
+        );
+        const lastBotReplyTime = botReplies.length === 0 ? 0 : Math.max(
+            ...botReplies.map(c => Math.max(
                 new Date(c.created_at).getTime(),
                 new Date(c.updated_at).getTime()
             ))
