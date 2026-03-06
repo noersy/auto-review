@@ -11,6 +11,14 @@ export default {
     AUTO_FIX_LABEL: 'auto-fix',
     AUTO_REVIEW_LABEL: 'auto-review',
 
+    // Review Configurations
+    CUSTOM_GUIDELINE_FILES: [
+        'REVIEW_GUIDELINES.md',
+        'docs/REVIEW_GUIDELINES.md',
+        '.github/coding-standards.md',
+        '.cursorrules'
+    ],
+
     // Jenkins
     WEBHOOK_TOKEN: 'headless-agent-webhook',
 

@@ -311,7 +311,7 @@ describe('runProviderCLI — model tiering options', () => {
         await runProviderCLI('gemini', 'prompt', { tier: 'light' });
         expect(mockSpawn).toHaveBeenCalledWith(
             'npx',
-            expect.arrayContaining(['--model', 'gemini-1.5-flash']), // from config.js fake / standard
+            expect.arrayContaining(['--model', 'gemini-2.5-flash']), // from config.js fake / standard
             expect.any(Object)
         );
     });
@@ -323,7 +323,7 @@ describe('runProviderCLI — model tiering options', () => {
         await runProviderCLI('claude', 'prompt', { tier: 'light' });
         expect(mockSpawn).toHaveBeenCalledWith(
             'npx',
-            expect.arrayContaining(['--model', 'claude-3-5-haiku-20241022']),
+            expect.arrayContaining(['--model', 'claude-haiku-4-5-20251001']),
             expect.any(Object)
         );
     });
@@ -336,7 +336,7 @@ describe('runProviderCLI — model tiering options', () => {
         await runProviderCLI('claude', 'prompt', { tier: 'unrecognized' });
         expect(mockSpawn).toHaveBeenCalledWith(
             'npx',
-            expect.arrayContaining(['--model', 'claude-3-5-sonnet-20241022']),
+            expect.arrayContaining(['--model', 'claude-sonnet-4-6']),
             expect.any(Object)
         );
     });

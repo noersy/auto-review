@@ -4,6 +4,8 @@ import config from './config.js';
 import { runProviderCLI } from './provider.js';
 import { parseSecurityResult, shouldBlockMerge, buildSecurityReport } from './security.js';
 import { setupBranch, getChangedFiles, commitAndPush } from './git.js';
+import fs from 'fs';
+import path from 'path';
 
 /**
  * Flow A & D: Review a Pull Request.
@@ -40,13 +42,28 @@ export async function flowReview(gh, repo, prNumber, provider, dryRun, options =
     const isPRBodyEmpty = !prData.body || !prData.body.trim();
     const repoDir = process.env.REPO_DIR ?? process.cwd();
 
+    // Read custom guidelines
+    let customGuidelines = null;
+    for (const filePath of config.CUSTOM_GUIDELINE_FILES) {
+        const fullPath = path.join(repoDir, filePath);
+        if (fs.existsSync(fullPath)) {
+            try {
+                customGuidelines = fs.readFileSync(fullPath, 'utf8');
+                logger.info(`Loaded custom review guidelines from ${filePath}`);
+                break; // Use the first one found
+            } catch (err) {
+                logger.warn(`Failed to read custom guidelines from ${filePath}: ${err.message}`);
+            }
+        }
+    }
+
     // Fetch comments and run review (+ optional summary) in parallel
     let existingReview, reviewText, summaryText;
     try {
         ([{ existingReview }, [reviewText, summaryText]] = await Promise.all([
             gh.getCommentsContext(repo, prNumber),
             Promise.all([
-                runProviderCLI(provider, buildReviewPrompt(prData.title, prData.additions, prData.deletions, targetBranch, repoDir)),
+                runProviderCLI(provider, buildReviewPrompt(prData.title, prData.additions, prData.deletions, targetBranch, repoDir, customGuidelines)),
                 isPRBodyEmpty
                     ? runProviderCLI(provider, buildSummaryPrompt(prData.title, targetBranch, repoDir), { tier: 'light' })
                     : Promise.resolve(null),

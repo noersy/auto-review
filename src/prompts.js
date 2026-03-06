@@ -1,9 +1,14 @@
-export function buildReviewPrompt(prTitle, additions, deletions, targetBranch, repoDir) {
+export function buildReviewPrompt(prTitle, additions, deletions, targetBranch, repoDir, customGuidelines = null) {
+  let guidelinesSection = '';
+  if (customGuidelines && customGuidelines.trim()) {
+    guidelinesSection = `\nCRITICAL: You MUST strictly adhere to the following repository-specific review guidelines:\n<custom_guidelines>\n${customGuidelines}\n</custom_guidelines>\nEvaluate the PR against these guidelines and highlight any violations.\n`;
+  }
+
   return `You are an expert Principal Software Engineer acting as a code reviewer.
 I have checked out a Pull Request branch titled "${prTitle}". The PR has +${additions} and -${deletions} lines.
 The repository is located at ${repoDir}. Please review the changes using \`git diff origin/${targetBranch}...\` inside ${repoDir}.
 If needed, inspect the full files in ${repoDir} to understand the context.
-
+${guidelinesSection}
 Focus on:
 1. Finding actual bugs or logical errors.
 2. Security vulnerabilities.
