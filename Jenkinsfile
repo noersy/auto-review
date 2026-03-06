@@ -29,7 +29,7 @@ pipeline {
     environment {
         GITHUB_TOKEN = credentials('GITHUB_TOKEN')
         CI           = 'true'
-        GH_PROVIDER  = 'claude'
+        GH_PROVIDER  = 'gemini'
     }
 
     stages {
