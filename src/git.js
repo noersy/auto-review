@@ -8,8 +8,7 @@ const IGNORED_TEMP_PATTERNS = [
     /^\.gemini-settings\.json$/,
     /^\.bot-comment-body\.txt$/,
     /^pr_description\.md$/,
-    /^\.creds\//,
-    /^test-file-[a-f0-9]+\.js$/
+    /^\.creds\//
 ];
 
 /**
