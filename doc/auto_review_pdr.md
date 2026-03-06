@@ -113,8 +113,12 @@ Semua event masuk dari GitHub Webhook diarahkan berdasarkan kondisi berikut di `
    - **Critical / High:** Tambahkan label `security-risk`, set commit status `failure`, post laporan keamanan.
    - **Medium / Low:** Hapus label `security-risk`, set commit status `success`, post laporan keamanan.
    - **Clean:** Hapus label `security-risk`, set commit status `success`. Tidak ada komentar.
+6. Jika `PERFORMANCE_SCAN_ENABLED = true`, jalankan statis pemindaian performa:
+   - **Critical / High:** Tambahkan label `performance-risk`, set commit status `failure`, post laporan performa.
+   - **Medium / Low:** Hapus label `performance-risk`, set commit status `success`, post laporan performa.
+   - **Clean:** Hapus label `performance-risk`, set commit status `success`. Tidak ada komentar.
 
-**Error Handling:** Timeout atau kegagalan LLM diposting sebagai komentar ke PR. Security scan bersifat non-fatal — kegagalan scan tidak menghentikan flow.
+**Error Handling:** Timeout atau kegagalan LLM diposting sebagai komentar ke PR. Security scan dan Performance scan bersifat non-fatal — kegagalan scan tidak menghentikan flow.
 
 ---
 
@@ -199,7 +203,7 @@ Semua event masuk dari GitHub Webhook diarahkan berdasarkan kondisi berikut di `
 
 | Flow | LLM Calls (max) | Timeout per Call | Worst-Case Duration |
 |---|---|---|---|
-| A — PR Review | 3 (review + summary + security) | 10 menit | 30 menit |
+| A — PR Review | 4 (review + summary + security + performance) | 10 menit | 40 menit |
 | B — Reply Comment | 1 | 10 menit | 10 menit |
 | C — Auto Fix Issue | 4 (validate + fix + retry + summary) | 10 menit | 40 menit |
 | D — Manual Re-Review | Sama dengan Flow A | — | 30 menit |
@@ -238,6 +242,35 @@ Security scan menggunakan `buildSecurityScanPrompt`. Output JSON yang diharapkan
 
 ---
 
+## 7.a Performance Scan Output Format
+
+Performance scan menggunakan `buildPerformanceScanPrompt`. Output JSON yang diharapkan dari LLM:
+
+```json
+{
+  "performanceIssues": [
+    {
+      "type": "N_PLUS_ONE | EXCESSIVE_ITERATION | MEMORY_LEAK | BIG_O_COMPLEXITY | UNOPTIMIZED_API | SYNC_BLOCKING | DOM_MANIPULATION | OTHER",
+      "severity": "critical | high | medium | low",
+      "file": "path/to/file.js",
+      "line": 42,
+      "description": "Brief description of the performance bottleneck",
+      "suggestion": "Specific remediation suggestion"
+    }
+  ],
+  "summary": "Brief overall performance assessment",
+  "overallRisk": "critical | high | medium | low | none"
+}
+```
+
+`performance.js` mem-parse `overallRisk` untuk menentukan tindakan:
+
+- `critical` / `high` → label `performance-risk` + commit status `failure`
+- `medium` / `low` → hapus label `performance-risk` + commit status `success` + post findings
+- `none` → hapus label `performance-risk` + commit status `success`, tidak ada komentar
+
+---
+
 ## 8. Prompt Context Reference
 
 | Prompt Function | Context yang Dikirim ke LLM |
@@ -248,6 +281,7 @@ Security scan menggunakan `buildSecurityScanPrompt`. Output JSON yang diharapkan
 | `buildIssueFixPrompt` | Issue title, issue body, repo dir path |
 | `buildIssueFixRetryPrompt` | Issue title, issue body, repo dir path (dengan instruksi lebih eksplisit) |
 | `buildSecurityScanPrompt` | PR title, target branch, repo dir path |
+| `buildPerformanceScanPrompt` | PR title, target branch, repo dir path |
 | `buildIssueValidationPrompt` | Issue title, issue body (tanpa repo dir — hanya teks) |
 
 > `buildReplyPrompt` dan `buildIssueFixPrompt` menggunakan XML tag wrapping (`<conversation>`, `<issue>`) dengan instruksi eksplisit untuk tidak mengikuti instruksi dalam tag tersebut — sebagai mitigasi prompt injection.
@@ -260,8 +294,9 @@ Security scan menggunakan `buildSecurityScanPrompt`. Output JSON yang diharapkan
 |---|---|
 | `github.js` | Semua operasi GitHub API (GET/POST PR, Issue, Comment, Label, Status). Retry logic: 3 attempts, base delay 2.000 ms × attempt number. |
 | `provider.js` | Menjalankan LLM CLI (claude / gemini) sebagai child process. Timeout: 10 menit. |
-| `prompts.js` | Membangun semua prompt LLM: review, reply, fix, fix-retry, validation, summary, security scan. |
+| `prompts.js` | Membangun semua prompt LLM: review, reply, fix, fix-retry, validation, summary, security scan, performance scan. |
 | `security.js` | Mem-parse output JSON dari LLM security scan, menentukan level risiko, dan membangun laporan keamanan. |
+| `performance.js` | Mem-parse output JSON dari LLM performance scan, menentukan level risiko, dan membangun laporan performa. |
 | `git.js` | Operasi Git melalui shell: `setupBranch`, `getChangedFiles`, `commitAndPush`. |
 | `jenkins.js` | Membangun webhook payload dan mengirim HTTP request ke Jenkins Generic Webhook Trigger. |
 | `cli.js` | Antarmuka CLI manual untuk menjalankan flow secara lokal: `review`, `fix`, `reply`, `trigger`. |
@@ -289,8 +324,11 @@ Security scan menggunakan `buildSecurityScanPrompt`. Output JSON yang diharapkan
 | `AUTO_FIX_LABEL` | `auto-fix` | Label yang memicu Flow C |
 | `AUTO_REVIEW_LABEL` | `auto-review` | Label yang memicu Flow D |
 | `SECURITY_SCAN_ENABLED` | `true` | Aktifkan/nonaktifkan pemindaian keamanan |
-| `SECURITY_RISK_LABEL` | `security-risk` | Label yang ditambahkan saat ditemukan risiko tinggi |
-| `SECURITY_BLOCK_ON` | `['critical', 'high']` | Level risiko yang menyebabkan commit status `failure` |
+| `SECURITY_RISK_LABEL` | `security-risk` | Label yang ditambahkan saat ditemukan risiko tinggi pada security scan |
+| `SECURITY_BLOCK_ON` | `['critical', 'high']` | Level risiko security yang menyebabkan commit status `failure` |
+| `PERFORMANCE_SCAN_ENABLED` | `true` | Aktifkan/nonaktifkan pemindaian performa statis |
+| `PERFORMANCE_RISK_LABEL` | `performance-risk` | Label yang ditambahkan saat ditemukan risiko tinggi pada performance scan |
+| `PERFORMANCE_BLOCK_ON` | `['critical', 'high']` | Level risiko performance yang menyebabkan commit status `failure` |
 | `GEMINI_MODEL` | `gemini-3.1-pro-preview` | Model Gemini yang digunakan |
 
 ---
@@ -548,6 +586,7 @@ Bot mendukung dua provider: Claude (default) dan Gemini. Provider dipilih via fl
 | 1.3 | 2026-03-05 | Engineering Team | Added env vars, Jenkins job config, local dev guide, testing strategy, prompt context table, retry logic detail |
 | 1.4 | 2026-03-05 | Engineering Team | Added GitHub Token scopes, known limitations, concurrency behavior |
 | 1.5 | 2026-03-05 | Engineering Team | Added Glossary |
+| 1.6 | 2026-03-06 | Engineering Team | Added Static Performance Scan details |
 
 ---
 

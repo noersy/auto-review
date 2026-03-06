@@ -36,4 +36,10 @@ export default {
     SECURITY_RISK_LABEL: 'security-risk',
     SECURITY_STATUS_CONTEXT: 'auto-review/security',
     SECURITY_BLOCK_ON: ['critical', 'high'],
+
+    // Performance Scanner
+    PERFORMANCE_SCAN_ENABLED: true,
+    PERFORMANCE_RISK_LABEL: 'performance-risk',
+    PERFORMANCE_STATUS_CONTEXT: 'auto-review/performance',
+    PERFORMANCE_BLOCK_ON: ['critical', 'high'],
 };
