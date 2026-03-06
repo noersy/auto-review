@@ -17,11 +17,11 @@ export default {
     // LLM Models
     // Heavy Models (for complex reasoning, bug finding, reviews)
     GEMINI_MODEL: 'gemini-2.5-pro',
-    CLAUDE_MODEL: 'claude-3-5-sonnet-20241022',
+    CLAUDE_MODEL: 'claude-sonnet-4-6',
 
     // Light Models (for routing, validation, summarization)
     GEMINI_LIGHT_MODEL: 'gemini-2.5-flash',
-    CLAUDE_LIGHT_MODEL: 'claude-3-5-haiku-20241022',
+    CLAUDE_LIGHT_MODEL: 'claude-haiku-4-5-20251001',
 
     // Security Scanner
     SECURITY_SCAN_ENABLED: true,
