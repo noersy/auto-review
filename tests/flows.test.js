@@ -29,6 +29,9 @@ const mockParseSecurityResult = jest.fn();
 const mockShouldBlockMerge = jest.fn();
 const mockBuildSecurityReport = jest.fn();
 
+const mockParsePerformanceReport = jest.fn();
+const mockFormatPerformanceMarkdown = jest.fn();
+
 jest.unstable_mockModule('../src/provider.js', () => ({ runProviderCLI: mockRunProviderCLI }));
 jest.unstable_mockModule('../src/git.js', () => ({
     setupBranch: mockSetupBranch,
@@ -40,6 +43,10 @@ jest.unstable_mockModule('../src/security.js', () => ({
     shouldBlockMerge: mockShouldBlockMerge,
     buildSecurityReport: mockBuildSecurityReport,
 }));
+jest.unstable_mockModule('../src/performance.js', () => ({
+    parsePerformanceReport: mockParsePerformanceReport,
+    formatPerformanceMarkdown: mockFormatPerformanceMarkdown,
+}));
 jest.unstable_mockModule('../src/prompts.js', () => ({
     buildReviewPrompt: jest.fn(() => 'review-prompt'),
     buildReplyPrompt: jest.fn(() => 'reply-prompt'),
@@ -48,6 +55,7 @@ jest.unstable_mockModule('../src/prompts.js', () => ({
     buildIssueFixRetryPrompt: jest.fn(() => 'fix-retry-prompt'),
     buildIssueValidationPrompt: jest.fn(() => 'validation-prompt'),
     buildSecurityScanPrompt: jest.fn(() => 'security-prompt'),
+    buildPerformanceScanPrompt: jest.fn(() => 'performance-prompt'),
 }));
 jest.unstable_mockModule('../src/logger.js', () => ({
     logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
@@ -65,6 +73,8 @@ beforeEach(() => {
     mockParseSecurityResult.mockReset();
     mockShouldBlockMerge.mockReset();
     mockBuildSecurityReport.mockReset();
+    mockParsePerformanceReport.mockReset();
+    mockFormatPerformanceMarkdown.mockReset();
 });
 
 // ─── flowAutoClose ─────────────────────────────────────────────────────────
