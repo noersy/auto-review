@@ -34,7 +34,7 @@ export async function runProviderCLI(provider, promptText, options = {}) {
         '--yes', '@google/gemini-cli', '-p', promptText,
         '-y',
         '-o', 'stream-json',
-        '--include-directories', repoDir,
+        // '--include-directories', repoDir,
         '--model', targetModel
     ];
 
