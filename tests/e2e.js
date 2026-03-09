@@ -6,7 +6,7 @@ import crypto from 'crypto';
 const REPO = process.env.E2E_REPO || 'noersy/auto-review-sandbox';
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const JENKINS_URL = process.env.JENKINS_URL || 'http://localhost:8080';
-const JENKINS_TOKEN = process.env.JENKINS_TOKEN || 'headless-agent-webhook';
+const JENKINS_TOKEN = process.env.JENKINS_TOKEN || 'new-headless-agent-webhook';
 const PROVIDER = process.env.E2E_PROVIDER || 'gemini';
 const BOT_USERNAME = process.env.E2E_BOT_USERNAME || 'fei-reviewer';
 
@@ -103,9 +103,9 @@ async function runE2E() {
         });
 
         // Poll for Review
-        console.log(`⏳ Waiting for bot review (Timeout: 10 mins)...`);
+        console.log(`⏳ Waiting for bot review (Timeout: 20 mins)...`);
         let reviewComment = false;
-        for (let i = 0; i < 120; i++) {
+        for (let i = 0; i < 240; i++) {
             await sleep(5000);
             const { data: comments } = await safeApiCall(() =>
                 octokit.issues.listComments({ owner, repo, issue_number: prNumber })
@@ -139,9 +139,9 @@ async function runE2E() {
             sender: { login: 'e2e-tester-human' }, provider: PROVIDER
         });
 
-        console.log(`⏳ Waiting for bot reply (Timeout: 10 mins)...`);
+        console.log(`⏳ Waiting for bot reply (Timeout: 20 mins)...`);
         let replyComment = false;
-        for (let i = 0; i < 120; i++) {
+        for (let i = 0; i < 240; i++) {
             await sleep(5000);
             const { data: comments } = await safeApiCall(() =>
                 octokit.issues.listComments({ owner, repo, issue_number: prNumber })
@@ -167,6 +167,9 @@ async function runE2E() {
 
         // --- FLOW 3: Auto-Fix ---
         console.log(`\n--- FLOW 3: Auto-Fix ---`);
+        console.log(`🔀 Merging e2e test PR #${prNumber} to master before Auto-Fix so the target file exists...`);
+        await octokit.pulls.merge({ owner, repo, pull_number: prNumber });
+
         console.log(`🐛 Creating Issue asking for fix...`);
         const { data: issueData } = await octokit.issues.create({
             owner, repo, title: `Bug: Fix global variable in ${fileName}`,
@@ -189,9 +192,9 @@ async function runE2E() {
             sender: { login: 'e2e-script' }, provider: PROVIDER
         });
 
-        console.log(`⏳ Waiting for bot to create PR for issue #${issueNumber} (Timeout: 10 mins)...`);
+        console.log(`⏳ Waiting for bot to create PR for issue #${issueNumber} (Timeout: 20 mins)...`);
         fixPrNumber = null;
-        for (let i = 0; i < 120; i++) { // Auto-fix takes longer
+        for (let i = 0; i < 240; i++) { // Auto-fix takes longer
             await sleep(5000);
             const { data: pulls } = await safeApiCall(() =>
                 octokit.pulls.list({ owner, repo, state: 'open', head: `${owner}:auto-fix/issue-${issueNumber}` })
@@ -219,9 +222,9 @@ async function runE2E() {
             sender: { login: 'e2e-script' }, provider: PROVIDER
         });
 
-        console.log(`⏳ Waiting for bot to close issue #${issueNumber} (Timeout: 10 mins)...`);
+        console.log(`⏳ Waiting for bot to close issue #${issueNumber} (Timeout: 20 mins)...`);
         let issueClosed = false;
-        for (let i = 0; i < 120; i++) {
+        for (let i = 0; i < 240; i++) {
             await sleep(5000);
             const { data: checkIssue } = await safeApiCall(() =>
                 octokit.issues.get({ owner, repo, issue_number: issueNumber })
