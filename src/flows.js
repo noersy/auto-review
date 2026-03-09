@@ -1,8 +1,9 @@
-import { buildReviewPrompt, buildReplyPrompt, buildIssueFixPrompt, buildIssueFixRetryPrompt, buildIssueValidationPrompt, buildSummaryPrompt, buildSecurityScanPrompt } from './prompts.js';
+import { buildReviewPrompt, buildReplyPrompt, buildIssueFixPrompt, buildIssueFixRetryPrompt, buildIssueValidationPrompt, buildSummaryPrompt, buildSecurityScanPrompt, buildPerformanceScanPrompt } from './prompts.js';
 import { logger } from './logger.js';
 import config from './config.js';
 import { runProviderCLI } from './provider.js';
 import { parseSecurityResult, shouldBlockMerge, buildSecurityReport } from './security.js';
+import { parsePerformanceReport, formatPerformanceMarkdown } from './performance.js';
 import { setupBranch, getChangedFiles, commitAndPush } from './git.js';
 import fs from 'fs';
 import path from 'path';
@@ -262,6 +263,67 @@ export async function flowReview(gh, repo, prNumber, provider, dryRun, options =
             }
         } catch (err) {
             logger.warn(`Security scan failed (non-fatal): ${err.message}`);
+        }
+    }
+
+    // --- Performance Guardrails ---
+    if (config.PERFORMANCE_SCAN_ENABLED) {
+        logger.info('Running static performance scan...');
+        try {
+            const performanceRaw = await runProviderCLI(provider, buildPerformanceScanPrompt(prData.title, targetBranch, repoDir));
+            const performanceResult = parsePerformanceReport(performanceRaw);
+
+            if (!performanceResult) {
+                logger.warn('Performance scan produced unparseable output — skipping performance report.');
+            } else {
+                const isBlocking = config.PERFORMANCE_BLOCK_ON.includes(performanceResult.overallRisk);
+                const report = formatPerformanceMarkdown(performanceResult);
+                const headSha = prData.head.sha;
+
+                if (isBlocking) {
+                    // Critical/High
+                    if (dryRun) {
+                        logger.info(`[DRY-RUN] Would add label "${config.PERFORMANCE_RISK_LABEL}" to ${repo}#${prNumber}`);
+                        logger.info(`[DRY-RUN] Would set commit status "failure" on ${headSha.slice(0, 7)}`);
+                        logger.info(`[DRY-RUN] Would post performance report to ${repo}#${prNumber}`);
+                    } else {
+                        await gh.addLabel(repo, prNumber, config.PERFORMANCE_RISK_LABEL);
+                        await gh.createCommitStatus(repo, headSha, 'failure',
+                            `Performance risk: ${performanceResult.overallRisk} severity detected`,
+                            config.PERFORMANCE_STATUS_CONTEXT);
+                        await gh.postComment(repo, prNumber, report);
+                    }
+                    logger.warn(`Performance scan: ${performanceResult.overallRisk.toUpperCase()} risk — merge blocked.`);
+                } else if (performanceResult.issues.length > 0) {
+                    // Medium/Low
+                    if (dryRun) {
+                        logger.info(`[DRY-RUN] Would remove label "${config.PERFORMANCE_RISK_LABEL}" from ${repo}#${prNumber}`);
+                        logger.info(`[DRY-RUN] Would set commit status "success" on ${headSha.slice(0, 7)}`);
+                        logger.info(`[DRY-RUN] Would post performance report to ${repo}#${prNumber}`);
+                    } else {
+                        await gh.removeLabel(repo, prNumber, config.PERFORMANCE_RISK_LABEL);
+                        await gh.createCommitStatus(repo, headSha, 'success',
+                            'Performance scan passed (minor findings)',
+                            config.PERFORMANCE_STATUS_CONTEXT);
+                        await gh.postComment(repo, prNumber, report);
+                    }
+                    logger.info('Performance scan: minor findings reported.');
+                } else {
+                    // Clean
+                    if (dryRun) {
+                        logger.info(`[DRY-RUN] Would remove label "${config.PERFORMANCE_RISK_LABEL}" from ${repo}#${prNumber}`);
+                        logger.info(`[DRY-RUN] Would set commit status "success" on ${headSha.slice(0, 7)}`);
+                    } else {
+                        await gh.removeLabel(repo, prNumber, config.PERFORMANCE_RISK_LABEL);
+                        await gh.createCommitStatus(repo, headSha, 'success',
+                            'No performance bottlenecks detected',
+                            config.PERFORMANCE_STATUS_CONTEXT);
+                    }
+                    logger.info('Performance scan: clean — no bottlenecks found.');
+                }
+            }
+        } catch (err) {
+            logger.warn(`Performance scan failed (non-fatal): ${err.message}`);
         }
     }
 }
