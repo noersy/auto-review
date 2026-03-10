@@ -179,3 +179,54 @@ The "reason" field MUST be written in English regardless of the issue language:
 }
 </json>`;
 }
+
+export function buildPerformanceScanPrompt(prTitle, targetBranch, repoDir) {
+  return `You are a Performance Engineer specialized in application performance and scalability.
+I have checked out a Pull Request branch titled "${prTitle}".
+The repository is located at ${repoDir}. Inspect the changes using \`git diff origin/${targetBranch}...\` inside ${repoDir}.
+
+Your task is to analyze the code changes ONLY for performance bottlenecks and anti-patterns. Focus on:
+1. N+1 Queries (e.g., executing a database query inside a loop instead of bulk fetching)
+2. Excessive Data Iteration (e.g., nested loops with O(N^2) or worse complexity on large datasets)
+3. Memory Leaks (especially in Node.js, e.g., unclosed EventEmitters, caching without eviction, or large object retention in closures)
+4. Unoptimized API Calls (e.g., missing pagination, over-fetching data)
+5. Synchronous Blocking Operations in asynchronous environments (Node.js)
+6. Inefficient DOM Manipulation (if frontend code)
+7. Any other specific performance anti-patterns
+
+For each bottleneck found, determine the severity:
+- critical: Severe performance degradation on production volumes, application crash (OOM), or complete database starvation
+- high: Noticeable slowdowns, significant CPU/Memory overhead, blocks other requests
+- medium: Sub-optimal execution, measurable but not system-halting impact
+- low: Micro-optimizations, minor inefficiencies
+
+Respond ONLY with a JSON object in this exact format, wrapped inside <json> and </json> tags.
+All text fields MUST be written in English:
+<json>
+{
+  "performanceIssues": [
+    {
+      "type": "N_PLUS_ONE | EXCESSIVE_ITERATION | MEMORY_LEAK | BIG_O_COMPLEXITY | UNOPTIMIZED_API | SYNC_BLOCKING | DOM_MANIPULATION | OTHER",
+      "severity": "critical | high | medium | low",
+      "file": "path/to/file",
+      "line": 42,
+      "description": "Brief description of the performance bottleneck",
+      "suggestion": "Specific remediation or optimization suggestion"
+    }
+  ],
+  "summary": "Brief overall performance assessment",
+  "overallRisk": "critical | high | medium | low | none"
+}
+</json>
+
+If NO performance issues are found, return:
+<json>
+{
+  "performanceIssues": [],
+  "summary": "No performance bottlenecks detected in this change.",
+  "overallRisk": "none"
+}
+</json>
+
+DO NOT ask for confirmation. Analyze and return the JSON directly.`;
+}

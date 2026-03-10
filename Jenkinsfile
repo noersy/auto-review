@@ -19,7 +19,7 @@ pipeline {
                 [key: 'GH_HEAD_BRANCH',  value: '$.pull_request.head.ref', defaultValue: ''],
                 [key: 'GH_PROVIDER',     value: '$.provider',              defaultValue: 'claude']
             ],
-            token: 'headless-agent-webhook',
+            token: 'new-headless-agent-webhook',
             causeString: 'PR Event from $GH_REPO using Provider $GH_PROVIDER',
             printContributedVariables: true,
             printPostContent: false,
@@ -29,7 +29,7 @@ pipeline {
     environment {
         GITHUB_TOKEN = credentials('GITHUB_TOKEN')
         CI           = 'true'
-        GH_PROVIDER  = 'claude'
+        GH_PROVIDER  = 'gemini'
     }
 
     stages {
@@ -172,7 +172,7 @@ pipeline {
                     dir('auto-review-bot') {
                         checkout([
                             $class: 'GitSCM',
-                            branches: [[name: 'auto-fix-by-issue']],
+                            branches: [[name: 'new-fix-by-issue']],
                             userRemoteConfigs: [[
                                 url: "https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/auto-review.git"
                             ]]
@@ -309,9 +309,9 @@ pipeline {
                                     git config --global --add safe.directory /app
                                     if [ -d /app/.git ]; then
                                         git -C /app fetch origin
-                                        git -C /app checkout -B auto-fix-by-issue origin/auto-fix-by-issue
+                                        git -C /app checkout -B new-fix-by-issue origin/new-fix-by-issue
                                     else
-                                        git clone --branch auto-fix-by-issue https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/auto-review.git /app
+                                        git clone --branch new-fix-by-issue https://x-access-token:${env.GITHUB_TOKEN}@github.com/noersy/auto-review.git /app
                                     fi
                                     cd /app
                                     LOCK_HASH=\$(sha256sum package-lock.json | cut -d" " -f1)
