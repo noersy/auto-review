@@ -1,6 +1,6 @@
 .credentials.json
 claude-cli-session.json
 node_modules/
-Jenkinsfile
 CLAUDE.md
 .claude
+.env

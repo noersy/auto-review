@@ -1,35 +1,26 @@
 FROM node:22-slim
 
-# Install git and npx dependencies
+# Install necessary system dependencies (git, ca-certificates, and procps for pgrep)
 RUN apt-get update && apt-get install -y \
     git \
     ca-certificates \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user (required: claude-code --dangerously-skip-permissions
 # refuses to run as root)
 RUN useradd -m -s /bin/bash botuser
 
-# Set working directory for the bot
-WORKDIR /app
+# Create writable dirs for botuser
+RUN mkdir -p /home/botuser/.claude /home/botuser/.gemini /app && \
+    chown -R botuser:botuser /home/botuser/.claude /home/botuser/.gemini /app
 
-# Copy bot source
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+# /app and /repo are populated at runtime via Jenkinsfile (git clone + docker cp)
+# No ENTRYPOINT or CMD — container is started with 'sleep infinity' and
+# commands are run via 'docker exec'
 
-COPY src/ ./src/
-COPY docker-entrypoint.sh /docker-entrypoint.sh
-
-# Give botuser ownership of /app and create writable .claude dir
-RUN chown -R botuser:botuser /app && \
-    mkdir -p /home/botuser/.claude && \
-    chown -R botuser:botuser /home/botuser/.claude && \
-    chmod +x /docker-entrypoint.sh
+ENV CI=true
 
 USER botuser
 
-# Claude Code CLI auth — credentials.json mounted at /run/secrets/claude-credentials
-# and copied to writable ~/.claude/ by entrypoint
-ENV CI=true
-
-ENTRYPOINT ["/docker-entrypoint.sh"]
+#new comment for test pr

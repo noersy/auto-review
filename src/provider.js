@@ -1,0 +1,151 @@
+import { spawn } from 'child_process';
+import readline from 'readline';
+import { logger } from './logger.js';
+import config from './config.js';
+
+const CLI_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
+export async function runProviderCLI(provider, promptText, options = {}) {
+    // Determine target tier, default to 'heavy'
+    const tier = options.tier === 'light' ? 'light' : 'heavy';
+    logger.info(`Executing ${provider.toUpperCase()} CLI (Tier: ${tier})...`);
+
+    // Select the actual model string from config based on provider and tier
+    let targetModel;
+    if (provider === 'gemini') {
+        targetModel = tier === 'light' ? config.GEMINI_LIGHT_MODEL : config.GEMINI_MODEL;
+    } else {
+        targetModel = tier === 'light' ? config.CLAUDE_LIGHT_MODEL : config.CLAUDE_MODEL;
+    }
+
+    const claudeArgs = [
+        '--yes', '@anthropic-ai/claude-code', '-p', promptText,
+        '--dangerously-skip-permissions',
+        '--output-format', 'stream-json',
+        '--verbose'
+    ];
+    // Claude CLI supports --model if available
+    if (targetModel) {
+        claudeArgs.push('--model', targetModel);
+    }
+
+    const repoDir = process.env.REPO_DIR ?? process.cwd();
+    const geminiArgs = [
+        '--yes', '@google/gemini-cli', '-p', promptText,
+        '-y',
+        '-o', 'stream-json',
+        // '--include-directories', repoDir,
+        '--model', targetModel
+    ];
+
+    if (provider !== 'claude' && provider !== 'gemini') {
+        throw new Error(`Unknown provider "${provider}". Expected "claude" or "gemini".`);
+    }
+    const providerArgs = provider === 'gemini' ? geminiArgs : claudeArgs;
+
+    return new Promise((resolve, reject) => {
+        const proc = spawn('npx', providerArgs, {
+            cwd: repoDir,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            env: { ...process.env, CI: 'true' },
+            shell: false,
+            detached: true // Create a process group so we can kill the entire tree
+        });
+
+        // Pipe stderr live and also capture for diagnostics
+        let stderrBuf = '';
+        proc.stderr.on('data', chunk => {
+            process.stderr.write(chunk);
+            stderrBuf += chunk.toString();
+        });
+
+        let finalResult = null;
+
+        const rl = readline.createInterface({
+            input: proc.stdout,
+            terminal: false
+        });
+
+        rl.on('line', line => {
+            if (!line.trim()) return;
+            try {
+                const event = JSON.parse(line);
+
+                if (provider === 'gemini') {
+                    /*
+                     * Gemini stream-json format:
+                     * Text chunks come in as: {"type":"message","role":"assistant","content":"...","delta":true}
+                     * The "result" event only contains stats.
+                     */
+                    if (event.type === 'message' && event.role === 'assistant' && event.content) {
+                        finalResult = (finalResult || '') + event.content;
+                        if (event.content.trim()) {
+                            logger.info(`[Gemini] ${event.content.trim()} `);
+                        }
+                    }
+                } else {
+                    /*
+                     * Claude stream-json format (--output-format stream-json --verbose):
+                     * - assistant: {"type":"assistant","message":{"content":[{"type":"text","text":"..."}|{"type":"tool_use","name":"..."}]}}
+                     * - result:    {"type":"result","subtype":"success","result":"..."}
+                     * Text is accumulated directly into finalResult from assistant events;
+                     * the result event's field is used only if no text was streamed.
+                     */
+                    if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+                        for (const block of event.message.content) {
+                            if (block.type === 'text' && block.text) {
+                                finalResult = (finalResult || '') + block.text;
+                                if (block.text.trim()) {
+                                    logger.info(`[Claude] ${block.text.trim()}`);
+                                }
+                            } else if (block.type === 'tool_use') {
+                                logger.info(`[Claude] tool: ${block.name} (${JSON.stringify(block.input).slice(0, 120)})`);
+                            }
+                        }
+                    } else if (event.type === 'result' && !finalResult) {
+                        finalResult = event.result || null;
+                    }
+                }
+            } catch (err) {
+                logger.warn(`Failed to parse stream JSON line: ${err.message}. Raw: ${line.slice(0, 150)}`);
+            }
+        });
+
+        const killProcessGroup = (signal) => {
+            try { process.kill(-proc.pid, signal); } catch (_) { }
+        };
+
+        const timeout = setTimeout(() => {
+            killProcessGroup('SIGTERM');
+            // Force-kill after 5 s grace period if process ignores SIGTERM
+            setTimeout(() => killProcessGroup('SIGKILL'), 5000);
+            reject(new Error(`${provider.toUpperCase()} CLI timed out after ${CLI_TIMEOUT_MS / 60000} minutes`));
+        }, CLI_TIMEOUT_MS);
+
+        proc.on('close', code => {
+            clearTimeout(timeout);
+            if (code !== 0) {
+                if (finalResult) {
+                    logger.info(`${provider.toUpperCase()} CLI exited with code ${code}, but review content was already received. Proceeding with partial result.`);
+                } else {
+                    reject(new Error(`${provider.toUpperCase()} CLI exited with code ${code}`));
+                    return;
+                }
+            }
+            if (!finalResult) {
+                const stderrTail = stderrBuf.split('\n').filter(l => l.trim()).slice(-20).join('\n');
+                reject(new Error(
+                    `${provider.toUpperCase()} CLI exited successfully but no result was found in output.\n` +
+                    `--- Last stderr (20 lines) ---\n${stderrTail || '(empty)'}`
+                ));
+                return;
+            }
+            resolve(finalResult);
+        });
+
+        proc.on('error', err => {
+            clearTimeout(timeout);
+            reject(new Error(`Failed to spawn ${provider.toUpperCase()} CLI: ` + err.message));
+        });
+    });
+}

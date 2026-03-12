@@ -2,7 +2,7 @@ import { Octokit } from '@octokit/rest';
 import { logger } from './logger.js';
 import config from './config.js';
 
-const RETRYABLE_STATUS = new Set([502, 503, 504]);
+const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
 
 async function withRetry(fn, label, retries = 3, delayMs = 2000) {
     for (let attempt = 1; attempt <= retries; attempt++) {
@@ -11,8 +11,25 @@ async function withRetry(fn, label, retries = 3, delayMs = 2000) {
         } catch (err) {
             const status = err.status ?? err.response?.status;
             if (attempt < retries && RETRYABLE_STATUS.has(status)) {
-                logger.warn(`${label} failed with ${status} — retrying (${attempt}/${retries})...`);
-                await new Promise(r => setTimeout(r, delayMs * attempt));
+                let waitMs = delayMs * attempt;
+                if (status === 429) {
+                    const retryAfter = err.response?.headers?.['retry-after'];
+                    if (retryAfter) {
+                        const parsed = parseInt(retryAfter, 10);
+                        if (!isNaN(parsed)) {
+                            // Retry-After as seconds
+                            waitMs = parsed * 1000;
+                        } else {
+                            // Retry-After as HTTP-date string
+                            const retryDate = new Date(retryAfter).getTime();
+                            if (!isNaN(retryDate)) {
+                                waitMs = Math.max(retryDate - Date.now(), delayMs * attempt);
+                            }
+                        }
+                    }
+                }
+                logger.warn(`${label} failed with ${status} — retrying in ${waitMs}ms (${attempt}/${retries})...`);
+                await new Promise(r => setTimeout(r, waitMs));
             } else {
                 throw err;
             }
@@ -42,6 +59,45 @@ export class GitHubClient {
         return data;
     }
 
+    // Get parent issue of a sub-issue. Returns parent issue data or null if no parent.
+    // Uses the dedicated REST endpoint: GET /repos/{owner}/{repo}/issues/{issue_number}/parent
+    async getParentIssue(repoFullName, issueNumber) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        try {
+            const { data } = await withRetry(
+                () => this.octokit.request('GET /repos/{owner}/{repo}/issues/{issue_number}/parent', {
+                    owner, repo, issue_number: issueNumber
+                }),
+                `GET parent issue of #${issueNumber}`
+            );
+            return data;
+        } catch (err) {
+            if (err.status === 404) return null;
+            throw err;
+        }
+    }
+
+    // Get Issue metadata (title, body)
+    async getIssue(repoFullName, issueNumber) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        logger.info(`Fetching Issue metadata for ${repoFullName}#${issueNumber}...`);
+        const { data } = await withRetry(
+            () => this.octokit.issues.get({ owner, repo, issue_number: issueNumber }),
+            `GET Issue #${issueNumber}`
+        );
+        return data;
+    }
+
+    // Update an existing comment by ID
+    async updateComment(repoFullName, commentId, body) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        logger.info(`Updating comment ${commentId} on ${repoFullName}...`);
+        await withRetry(
+            () => this.octokit.issues.updateComment({ owner, repo, comment_id: commentId, body }),
+            `PATCH comment ${commentId}`
+        );
+    }
+
     // Post a comment on a PR
     async postComment(repoFullName, issueNumber, body) {
         const { owner, repo } = this._parseRepo(repoFullName);
@@ -52,15 +108,117 @@ export class GitHubClient {
         );
     }
 
-    // Get comment thread (for reply context)
-    async getCommentThread(repoFullName, issueNumber) {
+    // Create a pull request review with inline comments
+    async createPullRequestReview(repoFullName, prNumber, event, body, comments) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        logger.info(`Creating PR review (${event}) on ${repoFullName}#${prNumber} with ${comments ? comments.length : 0} comments...`);
+        // If comments is undefined/null/empty, it just creates a review comment without inline comments
+        const { data } = await withRetry(
+            () => this.octokit.pulls.createReview({ owner, repo, pull_number: prNumber, event, body, comments }),
+            `POST review #${prNumber}`
+        );
+        return data;
+    }
+
+    // Fetch all comments once; returns { lastBotReplyTime, thread, existingReview }
+    // lastBotReplyTime: ms timestamp of most recent bot comment (0 if none)
+    // thread: formatted string of all comments for reply context
+    // existingReview: bot's review comment (identified by <!-- auto-review-bot --> marker), or null
+    async getCommentsContext(repoFullName, issueNumber) {
         const { owner, repo } = this._parseRepo(repoFullName);
         logger.info(`Fetching comments for ${repoFullName}#${issueNumber}...`);
-        const { data } = await withRetry(
-            () => this.octokit.issues.listComments({ owner, repo, issue_number: issueNumber }),
-            `GET comments #${issueNumber}`
+        const comments = await withRetry(
+            () => this.octokit.paginate(this.octokit.issues.listComments, {
+                owner, repo, issue_number: issueNumber, per_page: 100
+            }),
+            `LIST comments #${issueNumber}`
         );
-        return data.map(c => `[${c.user.login}]: ${c.body}`).join('\n\n');
+        const botComments = comments.filter(c => c.user.login === config.BOT_USERNAME);
+        // For cooldown purposes, only count actual reply comments — NOT review or security
+        // comments which are identified by their HTML marker tags.
+        const botReplies = botComments.filter(c =>
+            !c.body.includes('<!-- auto-review-bot -->') &&
+            !c.body.includes('<!-- auto-review-security -->')
+        );
+        const lastBotReplyTime = botReplies.length === 0 ? 0 : Math.max(
+            ...botReplies.map(c => Math.max(
+                new Date(c.created_at).getTime(),
+                new Date(c.updated_at).getTime()
+            ))
+        );
+        const thread = comments.map(c => `[${c.user.login}]: ${c.body}`).join('\n\n');
+        const existingReview = botComments.find(c => c.body.includes('<!-- auto-review-bot -->')) ?? null;
+        return { lastBotReplyTime, thread, existingReview };
+    }
+
+    // Get default branch of a repo
+    async getDefaultBranch(repoFullName) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        const { data } = await withRetry(
+            () => this.octokit.repos.get({ owner, repo }),
+            `GET repo ${repoFullName}`
+        );
+        return data.default_branch;
+    }
+
+    // Check if a branch exists on remote
+    async branchExists(repoFullName, branch) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        try {
+            await withRetry(
+                () => this.octokit.repos.getBranch({ owner, repo, branch }),
+                `GET branch ${branch}`
+            );
+            return true;
+        } catch (err) {
+            if (err.status === 404) return false;
+            throw err;
+        }
+    }
+
+    // Find an open PR by head branch name, returns PR data or null
+    async findOpenPR(repoFullName, headBranch) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        const { data } = await withRetry(
+            () => this.octokit.pulls.list({ owner, repo, head: `${owner}:${headBranch}`, state: 'open' }),
+            `LIST PRs for ${headBranch}`
+        );
+        return data.length > 0 ? data[0] : null;
+    }
+
+    // Create a Pull Request
+    async createPullRequest(repoFullName, title, body, head, base = 'main') {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        logger.info(`Creating PR in ${repoFullName}: ${head} -> ${base}...`);
+        const { data } = await withRetry(
+            () => this.octokit.pulls.create({ owner, repo, title, body, head, base }),
+            `CREATE PR ${head} -> ${base}`
+        );
+        return data;
+    }
+
+    // Close an issue with a comment
+    async closeIssue(repoFullName, issueNumber, comment) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        await withRetry(
+            () => this.octokit.issues.createComment({ owner, repo, issue_number: issueNumber, body: comment }),
+            `POST comment #${issueNumber}`
+        );
+        await withRetry(
+            () => this.octokit.issues.update({ owner, repo, issue_number: issueNumber, state: 'closed' }),
+            `CLOSE issue #${issueNumber}`
+        );
+        logger.info(`Issue #${issueNumber} closed.`);
+    }
+
+    // Update the body (description) of a PR
+    async updatePRDescription(repoFullName, prNumber, body) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        logger.info(`Updating PR description for ${repoFullName}#${prNumber}...`);
+        await withRetry(
+            () => this.octokit.pulls.update({ owner, repo, pull_number: prNumber, body }),
+            `PATCH PR #${prNumber} description`
+        );
     }
 
     // Check if PR is "massive"
@@ -73,5 +231,43 @@ export class GitHubClient {
             return { isMassive: true, prData: pr };
         }
         return { isMassive: false, prData: pr };
+    }
+
+    // Add a label to a PR/Issue
+    async addLabel(repoFullName, issueNumber, label) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        logger.info(`Adding label "${label}" to ${repoFullName}#${issueNumber}...`);
+        await withRetry(
+            () => this.octokit.issues.addLabels({ owner, repo, issue_number: issueNumber, labels: [label] }),
+            `ADD label "${label}" #${issueNumber}`
+        );
+    }
+
+    // Remove a label from a PR/Issue (safe if label doesn't exist)
+    async removeLabel(repoFullName, issueNumber, label) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        logger.info(`Removing label "${label}" from ${repoFullName}#${issueNumber}...`);
+        try {
+            await withRetry(
+                () => this.octokit.issues.removeLabel({ owner, repo, issue_number: issueNumber, name: label }),
+                `REMOVE label "${label}" #${issueNumber}`
+            );
+        } catch (err) {
+            if (err.status === 404) {
+                logger.info(`Label "${label}" not found on #${issueNumber} — skipping removal.`);
+            } else {
+                throw err;
+            }
+        }
+    }
+
+    // Create a commit status (for blocking/allowing merge)
+    async createCommitStatus(repoFullName, sha, state, description, context) {
+        const { owner, repo } = this._parseRepo(repoFullName);
+        logger.info(`Setting commit status "${state}" on ${sha.slice(0, 7)} (${context})...`);
+        await withRetry(
+            () => this.octokit.repos.createCommitStatus({ owner, repo, sha, state, description, context }),
+            `POST status ${sha.slice(0, 7)}`
+        );
     }
 }

@@ -1,10 +1,10 @@
-import { spawn } from 'child_process';
 import { Command } from 'commander';
-import dotenv from 'dotenv';
+import { readFileSync } from 'fs';
 import { GitHubClient } from './github.js';
-import { buildReviewPrompt, buildReplyPrompt } from './prompts.js';
 import { logger } from './logger.js';
 import config from './config.js';
+import { flowReview, flowReply, flowAutoFix, flowAutoClose } from './flows.js';
+import dotenv from 'dotenv';
 
 dotenv.config();
 
@@ -14,127 +14,106 @@ program
     .requiredOption('--repo <repo>')
     .requiredOption('--pr <number>')
     .option('--comment-body <body>', '')
-    .option('--sender <login>', '');
+    .option('--comment-body-file <path>', 'Path to file containing comment body (avoids shell injection)')
+    .option('--sender <login>', '')
+    .option('--label-name <label>', '')
+    .option('--provider <provider>', 'LLM CLI provider to use (claude/gemini)', 'claude')
+    .option('--merged', 'Whether the PR was merged (for closed action)', false)
+    .option('--head-branch <branch>', 'Head branch of the closed PR', '')
+    .option('--dry-run', 'Skip all GitHub and Git writes; LLM calls still run', false);
 
 program.parse();
 const opts = program.opts();
 
-// Run Claude Code CLI and return the final result text.
-// stderr (Claude's thinking/tool-use progress) is streamed live to console.
-// stdout (JSONL events) is captured to extract the final result.
-async function runClaudeCLI(promptText) {
-    logger.info("Executing Claude Code CLI...");
+// Resolve comment body: prefer --comment-body-file over --comment-body
+if (opts.commentBodyFile) {
+    try {
+        opts.commentBody = readFileSync(opts.commentBodyFile, 'utf8');
+    } catch (err) {
+        logger.warn(`Could not read --comment-body-file "${opts.commentBodyFile}": ${err.message}`);
+        opts.commentBody = '';
+    }
+}
 
-    return new Promise((resolve, reject) => {
-        const proc = spawn(
-            'npx',
-            ['--yes', '@anthropic-ai/claude-code', '-p', promptText,
-                '--dangerously-skip-permissions',
-                '--output-format', 'stream-json',
-                '--verbose'],
-            {
-                stdio: ['ignore', 'pipe', 'pipe'],
-                env: { ...process.env, CI: 'true' },
-                shell: false
-            }
-        );
+// Validate --repo format (must be "owner/repo")
+if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(opts.repo)) {
+    console.error(`Invalid --repo format: "${opts.repo}". Expected "owner/repo".`);
+    process.exit(1);
+}
 
-        // Pipe stderr live so we can see what Claude CLI is doing
-        proc.stderr.on('data', chunk => {
-            process.stderr.write(chunk);
-        });
+// Validate --pr is a positive integer
+if (!/^\d+$/.test(opts.pr)) {
+    console.error(`Invalid --pr value: "${opts.pr}". Expected a positive integer.`);
+    process.exit(1);
+}
 
-        let stdoutBuf = '';
-        let finalResult = null;
-
-        proc.stdout.on('data', chunk => {
-            stdoutBuf += chunk.toString();
-            const lines = stdoutBuf.split('\n');
-            stdoutBuf = lines.pop(); // keep incomplete last line
-            for (const line of lines) {
-                if (!line.trim()) continue;
-                try {
-                    const event = JSON.parse(line);
-                    if (event.type === 'result') {
-                        finalResult = event.result;
-                    } else if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
-                        for (const block of event.message.content) {
-                            if (block.type === 'text' && block.text?.trim()) {
-                                logger.info(`[Claude] ${block.text.trim()}`);
-                            } else if (block.type === 'tool_use') {
-                                logger.info(`[Claude] tool: ${block.name}(${JSON.stringify(block.input).slice(0, 120)})`);
-                            }
-                        }
-                    }
-                } catch (_) { /* ignore non-JSON lines */ }
-            }
-        });
-
-        proc.on('close', code => {
-            if (code !== 0) {
-                reject(new Error(`Claude Code CLI exited with code ${code}`));
-                return;
-            }
-            if (!finalResult) {
-                reject(new Error('Claude Code CLI exited successfully but no result was found in output.'));
-                return;
-            }
-            resolve(finalResult);
-        });
-
-        proc.on('error', err => {
-            reject(new Error('Failed to spawn Claude Code CLI: ' + err.message));
-        });
-    });
+// Validate --action is a known value
+const KNOWN_ACTIONS = new Set(['opened', 'synchronize', 'reopened', 'created', 'labeled', 'closed', 'ready_for_review']);
+if (!KNOWN_ACTIONS.has(opts.action)) {
+    console.error(`Invalid --action value: "${opts.action}". Expected one of: ${[...KNOWN_ACTIONS].join(', ')}.`);
+    process.exit(1);
 }
 
 async function main() {
+    if (!process.env.GITHUB_TOKEN || !process.env.GITHUB_TOKEN.trim()) {
+        console.error('Missing required environment variable: GITHUB_TOKEN');
+        process.exit(1);
+    }
     const gh = new GitHubClient(process.env.GITHUB_TOKEN);
+    const dryRun = opts.dryRun;
+    if (dryRun) logger.info('DRY-RUN MODE: GitHub and Git writes are disabled.');
 
     try {
-        const isNewPR = ['opened', 'synchronize', 'reopened'].includes(opts.action);
-        const commentBody = (opts.commentBody === 'null' || !opts.commentBody) ? '' : opts.commentBody;
+        const isNewPR = ['opened', 'synchronize', 'reopened', 'ready_for_review'].includes(opts.action);
+        const commentBody = opts.commentBody || '';
         const isReply = opts.action === 'created' && commentBody.includes(config.BOT_MENTION);
 
-        // ===================================
-        // FLOW A: New PR Review
-        // ===================================
+        // Flow A: New PR Review
         if (isNewPR) {
             logger.info(`Triggered FLOW A: New PR Review for ${opts.repo}#${opts.pr}`);
-
-            const { isMassive, prData } = await gh.checkMassivePR(opts.repo, opts.pr);
-            if (isMassive) {
-                await gh.postComment(opts.repo, opts.pr,
-                    `⚠️ **Auto-Review Dibatalkan**\n\nPR ini mengubah total ${prData.additions + prData.deletions} baris kode (batas maksimum ${config.MASSIVE_PR_LINES}). Terlalu masif untuk di-review secara otomatis saat ini.\nSilakan review secara manual atau pecah PR menjadi bagian yang lebih kecil.`
-                );
-                logger.warn('Massive PR detected — aborted review.');
-                return;
-            }
-
-            const targetBranch = prData.base.ref;
-            const prompt = buildReviewPrompt(prData.title, prData.additions, prData.deletions, targetBranch);
-            const reviewText = await runClaudeCLI(prompt);
-            await gh.postComment(opts.repo, opts.pr, `## 🤖 Claude Auto Review\n\n${reviewText}`);
-            logger.info('Review posted successfully');
+            await flowReview(gh, opts.repo, opts.pr, opts.provider, dryRun, { ignoreDrafts: true });
             return;
         }
 
-        // ===================================
-        // FLOW B: Reply to Developer Comment
-        // ===================================
+        // Flow B: Reply to Developer Comment
         if (isReply) {
-            if (opts.sender === config.BOT_USERNAME) {
-                logger.info('Comment is from the bot itself — ignoring loop');
-                return;
-            }
+            await flowReply(gh, {
+                repo: opts.repo,
+                pr: opts.pr,
+                provider: opts.provider,
+                sender: opts.sender,
+                commentBody,
+                dryRun,
+            });
+            return;
+        }
 
-            logger.info(`Triggered FLOW B: Reply Comment for ${opts.repo}#${opts.pr}`);
+        // Flow C: Auto Fix Issue by Label
+        if (opts.action === 'labeled' && opts.labelName === config.AUTO_FIX_LABEL) {
+            await flowAutoFix(gh, {
+                repo: opts.repo,
+                pr: opts.pr,
+                provider: opts.provider,
+                dryRun,
+            });
+            return;
+        }
 
-            const thread = await gh.getCommentThread(opts.repo, opts.pr);
-            const prompt = buildReplyPrompt(thread);
-            const replyText = await runClaudeCLI(prompt);
-            await gh.postComment(opts.repo, opts.pr, replyText);
-            logger.info('Reply posted successfully');
+        // Flow D: Manual Review via Label
+        if (opts.action === 'labeled' && opts.labelName === config.AUTO_REVIEW_LABEL) {
+            logger.info(`Triggered FLOW D: Manual Review via label for ${opts.repo}#${opts.pr}`);
+            await flowReview(gh, opts.repo, opts.pr, opts.provider, dryRun, { ignoreDrafts: false });
+            return;
+        }
+
+        // Flow E: Auto-close Issue on PR Merge
+        if (opts.action === 'closed' && opts.merged) {
+            await flowAutoClose(gh, {
+                repo: opts.repo,
+                pr: opts.pr,
+                headBranch: opts.headBranch,
+                dryRun,
+            });
             return;
         }
 
