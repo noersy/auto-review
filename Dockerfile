@@ -22,3 +22,5 @@ RUN mkdir -p /home/botuser/.claude /home/botuser/.gemini /app && \
 ENV CI=true
 
 USER botuser
+
+#new comment for test pr
